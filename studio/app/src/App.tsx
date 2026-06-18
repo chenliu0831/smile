@@ -1,4 +1,5 @@
-// Placeholder shell — replaced in Phase 2 by the dockview single-window layout.
+import { RunView } from "./ui/RunView";
+
 export function App() {
-  return <div data-testid="app-root">Smile Studio</div>;
+  return <RunView />;
 }
