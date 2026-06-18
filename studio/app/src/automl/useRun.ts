@@ -1,11 +1,18 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../daemon/runState";
 import { connectRun } from "../daemon/connect";
+import { pickAndLoadDataset, canLoadDataset, type LoadedDataset } from "../daemon/dataset";
 import type { RunConnection } from "../daemon/wsClient";
 import type { DaemonMessage } from "../daemon/protocol";
 
 export interface RunController {
   state: RunState;
+  /** The dataset currently in scope (staged into the agent's input/), if any. */
+  dataset: LoadedDataset | null;
+  /** Whether dataset loading is available (desktop app only). */
+  canLoadDataset: boolean;
+  /** Prompt for a dataset file, stage it, and restart the session against it. */
+  loadDataset: () => Promise<void>;
   /** Send a free-text user turn (start or continue the conversation). */
   sendMessage: (text: string) => void;
   /** Answer the open clarify gate with free text (or a chosen option). */
@@ -38,6 +45,7 @@ export function useRun(): RunController {
   const connRef = useRef<RunConnection | null>(null);
   const [, force] = useState(0);
   const [generation, setGeneration] = useState(0);
+  const [dataset, setDataset] = useState<LoadedDataset | null>(null);
   const workingDirRef = useRef<string>(".");
 
   useEffect(() => {
@@ -78,6 +86,16 @@ export function useRun(): RunController {
 
   return {
     state,
+    dataset,
+    canLoadDataset: canLoadDataset(),
+    loadDataset: async () => {
+      const loaded = await pickAndLoadDataset();
+      if (!loaded) return; // cancelled
+      setDataset(loaded);
+      workingDirRef.current = loaded.workingDir;
+      connRef.current?.stop();
+      setGeneration((g) => g + 1); // reconnect against the new working dir
+    },
     sendMessage: (text) => {
       // One turn at a time: the daemon's Conversation is shared mutable state, so refuse
       // to send while a turn is streaming or a gate is open (defensive — the UI also

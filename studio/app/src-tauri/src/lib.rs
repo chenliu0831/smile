@@ -19,6 +19,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, State};
 use tauri_plugin_store::StoreExt;
+// `Manager` brings AppHandle::path() and try_state() into scope.
 
 const STORE_FILE: &str = "settings.json";
 const CONFIG_KEY: &str = "llm";
@@ -239,11 +240,70 @@ fn stop_daemon(state: State<DaemonState>) {
     }
 }
 
+/// Result of loading a dataset: the working directory the daemon should run in
+/// (its `input/` holds the copied file) plus display metadata for the UI.
+#[derive(Serialize)]
+pub struct LoadedDataset {
+    /// Absolute working directory; the agent's ./input/ convention resolves here.
+    pub working_dir: String,
+    /// The dataset file name as the agent will see it (input/<file>).
+    pub file_name: String,
+    pub size_bytes: u64,
+}
+
+/// Copies a chosen dataset file into a fresh session working dir's `input/` folder and
+/// returns that working dir. The agent's skills read `./input/<file>` (ADR-0005), so no
+/// skill change is needed — the daemon just runs with this as its CWD. A new session
+/// dir per load keeps datasets isolated and avoids stale Conversation context.
+#[tauri::command]
+fn load_dataset(
+    app: tauri::AppHandle,
+    state: State<DaemonState>,
+    source_path: String,
+) -> Result<LoadedDataset, String> {
+    use std::path::Path;
+    let src = Path::new(&source_path);
+    if !src.is_file() {
+        return Err(format!("not a file: {source_path}"));
+    }
+    let file_name = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("invalid file name")?
+        .to_string();
+
+    // Session dir under the app data dir: <data>/sessions/<token>/input/<file>.
+    let base = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("sessions")
+        .join(generate_session_token());
+    let input_dir = base.join("input");
+    std::fs::create_dir_all(&input_dir).map_err(|e| e.to_string())?;
+    let dest = input_dir.join(&file_name);
+    std::fs::copy(src, &dest).map_err(|e| format!("copy failed: {e}"))?;
+    let size_bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+
+    // A new dataset means a fresh session — stop any running daemon so the next
+    // start_daemon launches in the new working dir.
+    if let Some(mut d) = state.0.lock().unwrap().take() {
+        let _ = d.child.kill();
+    }
+
+    Ok(LoadedDataset {
+        working_dir: base.to_string_lossy().to_string(),
+        file_name,
+        size_bytes,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
         .manage(DaemonState::default())
         .on_window_event(|window, event| {
             // Kill the daemon when the main window closes.
@@ -260,7 +320,8 @@ pub fn run() {
             get_llm_config,
             set_llm_config,
             start_daemon,
-            stop_daemon
+            stop_daemon,
+            load_dataset
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smile Studio");

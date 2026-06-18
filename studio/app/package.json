@@ -16,6 +16,7 @@
     "@finos/perspective-viewer-d3fc": "^3.8.0",
     "@finos/perspective-viewer-datagrid": "^3.8.0",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.7.1",
     "apache-arrow": "^17.0.0",
     "dockview": "^6.6.1",
     "echarts": "^6.1.0",

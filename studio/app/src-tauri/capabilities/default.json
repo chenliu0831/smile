@@ -6,6 +6,7 @@
   "permissions": [
     "core:default",
     "shell:allow-spawn",
-    "store:default"
+    "store:default",
+    "dialog:allow-open"
   ]
 }

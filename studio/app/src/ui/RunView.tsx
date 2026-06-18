@@ -49,10 +49,9 @@ export function RunZones() {
 }
 
 function RunViewInner() {
-  const { state } = useRunContext();
   return (
     <div className="app">
-      <Topbar state={state} />
+      <Topbar />
       <RunZones />
     </div>
   );

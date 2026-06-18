@@ -12,7 +12,7 @@ import {
   type IDockviewPanelProps,
 } from "dockview";
 import "dockview/dist/styles/dockview.css";
-import { RunProvider, useRunContext } from "../automl/RunContext";
+import { RunProvider } from "../automl/RunContext";
 import { Topbar } from "./Topbar";
 import { RunZones } from "./RunView";
 import { NotebookPanel } from "./NotebookPanel";
@@ -95,10 +95,9 @@ function Dock() {
 }
 
 function ShellInner() {
-  const { state } = useRunContext();
   return (
     <div className="app">
-      <Topbar state={state} />
+      <Topbar />
       <div className="dock-area">
         <Dock />
       </div>

@@ -301,3 +301,16 @@ button {
   border-radius: 7px; padding: 8px 10px; font-size: 13px; font-family: inherit;
 }
 .gate .gate-input-row input:focus { outline: none; border-color: var(--accent); }
+
+/* ---- Dataset loader (P2) ---- */
+.topbar-btn {
+  padding: 5px 12px; border-radius: 7px; font-size: 12px; font-weight: 600;
+  background: var(--accent); color: #06121b; border: none; margin-right: 6px;
+}
+.topbar-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.dataset-chip {
+  font-size: 12px; color: var(--text); background: var(--bg-elev-2);
+  border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; margin-left: 10px;
+}
+.dataset-chip em { color: var(--text-dim); font-style: normal; margin-left: 4px; }
+.topbar-error { color: var(--warn); margin-left: 6px; cursor: help; }
