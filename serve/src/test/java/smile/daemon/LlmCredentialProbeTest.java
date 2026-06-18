@@ -18,6 +18,7 @@ package smile.daemon;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import ioa.llm.client.ChatCompletions;
 import ioa.llm.client.LLM;
 
 /**
@@ -39,7 +40,14 @@ public class LlmCredentialProbeTest {
         System.out.println("AWS_BEARER_TOKEN_BEDROCK set: " + (System.getenv("AWS_BEARER_TOKEN_BEDROCK") != null));
         System.out.println("CLAUDE_CODE_USE_BEDROCK: " + System.getenv("CLAUDE_CODE_USE_BEDROCK"));
         try {
-            LLM llm = LLM.of(provider, model);
+            LLM llm;
+            if ("bedrock".equalsIgnoreCase(provider)) {
+                String baseUrl = System.getProperty("smile.daemon.llm.baseUrl", "");
+                System.out.println("bedrock baseUrl: " + baseUrl);
+                llm = new ChatCompletions(baseUrl, System.getenv("AWS_BEARER_TOKEN_BEDROCK"), model);
+            } else {
+                llm = LLM.of(provider, model);
+            }
             System.out.println("LLM constructed: " + llm.model());
             String reply = llm.complete("Reply with exactly: PONG").get();
             System.out.println("=== LLM REPLY: [" + reply + "] ===");

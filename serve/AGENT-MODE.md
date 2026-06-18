@@ -7,6 +7,15 @@ The daemon (`serve/`) can drive AutoML Runs two ways, selected by `smile.daemon.
 | `scripted` (default) | `ScriptedRunSource` | demo / offline / tests; replays a churn run with a real blocking gate |
 | `agent` | `AgentRunSource` | the real Clair `automl` agent skill from `ioa-agent` |
 
+### Agent-mode LLM providers (`smile.daemon.llm.provider`)
+
+| provider | how it authenticates |
+|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` env var (public Anthropic API) |
+| `openai` | `OPENAI_API_KEY` |
+| `gemini` | `GOOGLE_API_KEY` |
+| `bedrock` | **Claude on Bedrock via the OpenAI-compatible ChatCompletions API**: `smile.daemon.llm.baseUrl` = the Bedrock gateway endpoint, bearer token from `AWS_BEARER_TOKEN_BEDROCK` env var, `smile.daemon.llm.model` = the Bedrock model id |
+
 ## Prerequisite: vendored jars (not in git)
 
 The repo's root `.gitignore` excludes `*.jar`, so the agent jars are **not committed**
@@ -38,16 +47,26 @@ cp /path/to/smile-<ver>/lib/ioa-aid-1.0.0.jar    serve/lib/
 
 ## Verified status (2026-06-18)
 
-Wiring is correct end-to-end **up to the LLM call**: the agent constructs, all tools load, and a completion request reaches `api.anthropic.com`. It currently returns **401 `x-api-key header is required`** because no API key is present in the daemon JVM's environment (`ANTHROPIC_API_KEY` unset). Provide a key via the environment and re-run:
+Wiring is correct end-to-end **up to the LLM call**: the agent constructs, all tools load, and a completion request reaches `api.anthropic.com`. It currently returns **401 `x-api-key header is required`** because no API key is present in the daemon JVM's environment (`ANTHROPIC_API_KEY` unset). Provide credentials via the environment and re-run.
+
+**Claude on Bedrock (OpenAI-compatible path):**
 
 ```bash
-# from a dir containing input/<dataset>.csv
-ANTHROPIC_API_KEY=sk-ant-... \
+# in ~/.zshrc (or exported in the launching shell):
+export AWS_BEARER_TOKEN_BEDROCK='<your-bedrock-key>'
+
+# from a dir containing input/<dataset>.csv:
 ./gradlew :serve:quarkusDev -Dquarkus.http.host=127.0.0.1 \
   -Dsmile.daemon.engine=agent \
+  -Dsmile.daemon.llm.provider=bedrock \
+  -Dsmile.daemon.llm.baseUrl='<bedrock OpenAI-compatible endpoint>' \
+  -Dsmile.daemon.llm.model='<bedrock model id>' \
   -Dsmile.home=$PWD \
   -Dsmile.daemon.prompt="Run AutoML on input/churn.csv; maximize AUC."
 ```
+
+**Native Anthropic / OpenAI / Gemini:** set the matching env var (table above) and
+use `-Dsmile.daemon.llm.provider=anthropic` (etc.) instead.
 
 Manual probes (env-gated, never run in CI):
 - `SMILE_AGENT_TEST=1 ... --tests smile.daemon.LlmCredentialProbeTest` — confirms credentials.

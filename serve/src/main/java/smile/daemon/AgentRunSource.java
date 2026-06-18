@@ -20,6 +20,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import ioa.agent.Agent;
 import ioa.llm.client.LLM;
 import ioa.llm.client.StreamResponseHandler;
@@ -53,15 +54,19 @@ public class AgentRunSource implements RunSource {
     private final String runId;
     private final String prompt;
     private final Path workingDir;
-    private final String provider;
-    private final String model;
+    private final Supplier<LLM> llmFactory;
 
-    public AgentRunSource(String runId, String prompt, Path workingDir, String provider, String model) {
+    /**
+     * @param runId      id for the emitted messages.
+     * @param prompt     the analysis instruction for Clair.
+     * @param workingDir the agent's working directory (where datasets / outputs live).
+     * @param llmFactory builds the LLM client (provider/Bedrock wiring lives in the caller).
+     */
+    public AgentRunSource(String runId, String prompt, Path workingDir, Supplier<LLM> llmFactory) {
         this.runId = runId;
         this.prompt = prompt;
         this.workingDir = workingDir;
-        this.provider = provider;
-        this.model = model;
+        this.llmFactory = llmFactory;
     }
 
     @Override
@@ -72,7 +77,7 @@ public class AgentRunSource implements RunSource {
         Agent agent;
         try {
             var spec = Agent.Spec.of("analyst");
-            LLM llm = LLM.of(provider, model);
+            LLM llm = llmFactory.get();
             agent = new Agent(spec, () -> llm, workingDir);
             // Clair's automl skill runs Python scripts and reads/writes files, so the
             // conversation needs the file/shell/data/planning tool families enabled.

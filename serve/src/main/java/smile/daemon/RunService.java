@@ -18,8 +18,11 @@ package smile.daemon;
 
 import java.nio.file.Path;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import ioa.llm.client.ChatCompletions;
+import ioa.llm.client.LLM;
 
 /**
  * Supplies the {@link RunSource} that drives AutoML Runs (ADR-0005). Selects between
@@ -38,13 +41,23 @@ public class RunService {
     @ConfigProperty(name = "smile.daemon.engine", defaultValue = "scripted")
     String engine;
 
-    /** LLM provider for the agent engine: {@code anthropic} | {@code openai} | {@code gemini}. */
+    /**
+     * LLM provider for the agent engine:
+     * {@code anthropic} | {@code openai} | {@code gemini} (native), or
+     * {@code bedrock} (Claude on Bedrock via the OpenAI-compatible ChatCompletions API —
+     * base URL from {@code smile.daemon.llm.baseUrl}, bearer token from the
+     * {@code AWS_BEARER_TOKEN_BEDROCK} environment variable).
+     */
     @ConfigProperty(name = "smile.daemon.llm.provider", defaultValue = "anthropic")
     String provider;
 
-    /** LLM model id for the agent engine. */
+    /** LLM model id for the agent engine (e.g. a Bedrock model id for the bedrock provider). */
     @ConfigProperty(name = "smile.daemon.llm.model", defaultValue = "claude-opus-4-8")
     String model;
+
+    /** Base URL for the OpenAI-compatible {@code bedrock} provider (Bedrock gateway endpoint). */
+    @ConfigProperty(name = "smile.daemon.llm.baseUrl", defaultValue = "")
+    String baseUrl;
 
     /** Default analysis prompt for the agent engine when the webview sends none. */
     @ConfigProperty(name = "smile.daemon.prompt",
@@ -67,8 +80,30 @@ public class RunService {
         if ("agent".equalsIgnoreCase(engine)) {
             String runId = "run-" + Long.toHexString(System.nanoTime());
             Path cwd = Path.of(System.getProperty("user.dir"));
-            return new AgentRunSource(runId, prompt, cwd, provider, model);
+            return new AgentRunSource(runId, prompt, cwd, this::newLlm);
         }
         return new ScriptedRunSource(STEP_MILLIS);
+    }
+
+    /**
+     * Builds the LLM client for the agent engine. For {@code bedrock}, uses the
+     * OpenAI-compatible {@link ChatCompletions} client pointed at {@code baseUrl} with
+     * the bearer token from {@code AWS_BEARER_TOKEN_BEDROCK} — the same path the studio
+     * uses for Claude on Bedrock. Otherwise uses the native provider via {@link LLM#of}.
+     */
+    private LLM newLlm() {
+        if ("bedrock".equalsIgnoreCase(provider)) {
+            String token = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
+            if (token == null || token.isBlank()) {
+                throw new IllegalStateException(
+                        "bedrock provider requires the AWS_BEARER_TOKEN_BEDROCK environment variable");
+            }
+            if (baseUrl == null || baseUrl.isBlank()) {
+                throw new IllegalStateException(
+                        "bedrock provider requires smile.daemon.llm.baseUrl (the Bedrock OpenAI-compatible endpoint)");
+            }
+            return new ChatCompletions(baseUrl, token, model);
+        }
+        return LLM.of(provider, model);
     }
 }

@@ -20,6 +20,8 @@ import java.nio.file.Path;
 import java.util.concurrent.CopyOnWriteArrayList;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
+import ioa.llm.client.ChatCompletions;
+import ioa.llm.client.LLM;
 
 /**
  * Manual integration check for the agent-backed run, gated behind
@@ -39,10 +41,16 @@ public class AgentRunSourceManualTest {
     @Test
     public void clairInitializesAndStreams() throws Exception {
         Path cwd = Path.of(System.getProperty("smile.test.cwd", System.getProperty("user.dir")));
+        String provider = System.getProperty("smile.daemon.llm.provider", "anthropic");
+        String model = System.getProperty("smile.daemon.llm.model", "claude-opus-4-8");
+        String baseUrl = System.getProperty("smile.daemon.llm.baseUrl", "");
         var source = new AgentRunSource(
                 "manual-run",
                 "Examine input/churn.csv, report its shape and the churn rate in two sentences.",
-                cwd, "anthropic", "claude-opus-4-8");
+                cwd,
+                () -> "bedrock".equalsIgnoreCase(provider)
+                        ? new ChatCompletions(baseUrl, System.getenv("AWS_BEARER_TOKEN_BEDROCK"), model)
+                        : LLM.of(provider, model));
         var control = new RunControl();
         var msgs = new CopyOnWriteArrayList<DaemonMessage>();
 
