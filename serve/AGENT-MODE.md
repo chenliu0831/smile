@@ -45,7 +45,43 @@ cp /path/to/smile-<ver>/lib/ioa-aid-1.0.0.jar    serve/lib/
   - Gemini: `GOOGLE_API_KEY`.
   - (Bedrock-routed Anthropic would require the anthropic SDK's Bedrock config — `CLAUDE_CODE_USE_BEDROCK` alone is NOT consumed by ioa-agent's Anthropic client.)
 
-## Verified status (2026-06-18)
+## Running the production jar (recommended over quarkusDev for agent mode)
+
+`quarkusDev` uses an isolated dev classloader that does NOT expose the `base`/`plot`
+module classes to the vendored `ioa-agent` jar, so agent mode fails there with
+`NoClassDefFoundError: smile/io/Paths`. Use the built jar (unified classpath):
+
+```bash
+./gradlew :serve:quarkusBuild
+cd <dataset-dir>   # the agent's working dir = process CWD; must contain input/<data>.csv
+AWS_BEARER_TOKEN_BEDROCK='<token>' java \
+  --add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED \
+  --enable-native-access=ALL-UNNAMED \
+  -Dquarkus.http.host=127.0.0.1 -Dquarkus.http.port=8888 \
+  -Dquarkus.hibernate-orm.active=false \
+  -Dquarkus.http.cors=true -Dquarkus.http.cors.origins=http://localhost:1420 \
+  -Dsmile.daemon.engine=agent -Dsmile.daemon.llm.provider=bedrock \
+  -Dsmile.daemon.llm.baseUrl=https://bedrock-mantle.us-east-1.api.aws/v1 \
+  -Dsmile.daemon.llm.model=openai.gpt-oss-120b \
+  -Dsmile.home=/path/to/smile/repo \
+  -Dsmile.daemon.prompt="Run AutoML on input/churn.csv; maximize AUC." \
+  -jar /path/to/smile/repo/serve/build/quarkus-app/quarkus-run.jar
+```
+
+Then open the frontend pointed at it: `http://localhost:1420/?ws=ws://127.0.0.1:8888/ws/run`.
+
+## VERIFIED LIVE (2026-06-18) ✅
+
+Full stack confirmed end-to-end against **Bedrock** (`openai.gpt-oss-120b`,
+`https://bedrock-mantle.us-east-1.api.aws/v1`, `AWS_BEARER_TOKEN_BEDROCK`):
+real frontend WS client → production daemon → real ioa-agent → Clair → Bedrock →
+tool calls → typed protocol → three-zone UX. Screenshot:
+`studio/docs/v2-live-bedrock-agent-run.png` (status Completed, real token count, the
+`✅ Read churn.csv` tool-call card, Clair's streamed text). A bare-bones credential
+probe returns `PONG`. (Note: `gpt-oss-120b`'s file-read tool is occasionally flaky on
+small CSVs — orthogonal to the wiring, which is proven.)
+
+## Earlier status (superseded)
 
 Wiring is correct end-to-end **up to the LLM call**: the agent constructs, all tools load, and a completion request reaches `api.anthropic.com`. It currently returns **401 `x-api-key header is required`** because no API key is present in the daemon JVM's environment (`ANTHROPIC_API_KEY` unset). Provide credentials via the environment and re-run.
 
