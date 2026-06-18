@@ -18,6 +18,7 @@ package smile.daemon;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -94,6 +95,10 @@ public class AgentRunSource implements RunSource {
         }
 
         var toolSeq = new AtomicInteger();
+        // agent.stream() dispatches the LLM call asynchronously and returns immediately;
+        // block run() until the handler reports terminal completion so this RunSource's
+        // lifecycle matches the actual run (and the WS stays open until the run ends).
+        var doneLatch = new CountDownLatch(1);
         var handler = new StreamResponseHandler() {
             @Override
             public void onNext(String chunk) {
@@ -139,6 +144,7 @@ public class AgentRunSource implements RunSource {
             public void onComplete(long total, long output, long input) {
                 emit.accept(new StageProgress(runId, new Stage("automl", "AutoML (Clair)", StageStatus.done, List.of(), output + " output tokens")));
                 emit.accept(new RunFinished(runId, "completed"));
+                doneLatch.countDown();
             }
 
             @Override
@@ -147,9 +153,25 @@ public class AgentRunSource implements RunSource {
                 emit.accept(new AgentChunk(runId, "\nError: " + ex.getMessage() + "\n"));
                 emit.accept(new StageProgress(runId, new Stage("automl", "AutoML (Clair)", StageStatus.failed, List.of(), ex.getMessage())));
                 emit.accept(new RunFinished(runId, "failed"));
+                doneLatch.countDown();
             }
         };
 
-        agent.stream(prompt, handler);
+        try {
+            agent.stream(prompt, handler);
+            // Wait for terminal completion; cancellation breaks the wait.
+            while (!doneLatch.await(250, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                if (control.isCancelled()) {
+                    emit.accept(new RunFinished(runId, "cancelled"));
+                    return;
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Throwable t) {
+            LOG.error("Agent run threw synchronously", t);
+            emit.accept(new AgentChunk(runId, "\nError: " + t.getMessage() + "\n"));
+            emit.accept(new RunFinished(runId, "failed"));
+        }
     }
 }
