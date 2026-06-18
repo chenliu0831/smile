@@ -85,13 +85,20 @@ public class AgentRunSource implements RunSource {
             return;
         }
 
+        // Watch the working dir for the automl skill's output files and surface them as
+        // structured stages/artifacts (ADR-0006). One watcher for the whole session; it
+        // seeds the pipeline timeline on first start and dedupes across turns.
+        var watcher = new RunArtifactWatcher(sessionId, workingDir, emit);
+
         // Multi-turn loop: one user message -> one streamed agent turn -> idle.
         while (!control.isClosed()) {
             Optional<String> next = control.takeUserMessage();
             if (next.isEmpty()) break; // session closed
             control.clearCancel();
+            watcher.start(); // idempotent; begins seeding stages on the first real turn
             streamTurn(agent, next.get(), emit, control);
         }
+        watcher.stop();
         LOG.debug("Chat session ended");
     }
 
@@ -144,13 +151,22 @@ public class AgentRunSource implements RunSource {
                 String gateId = "g-" + seq.incrementAndGet();
                 var protoQ = new DaemonMessage.Question(gateId, question.question, question.choices);
                 String header = question.header != null ? question.header : "Needs your input";
-                emit.accept(new GateOpened(sessionId, new Gate(gateId, "clarify", header, protoQ)));
+                // A choice-less question with an "approval"-style header (e.g. the SDK's
+                // tool-call-limit gate, which expects exactly "Yes") is an APPROVAL gate;
+                // anything else is a clarify gate the user answers with text/options.
+                boolean approval = (question.choices == null || question.choices.isEmpty())
+                        && header.toLowerCase().contains("approval");
+                String kind = approval ? "approval" : "clarify";
+                emit.accept(new GateOpened(sessionId, new Gate(gateId, kind, header, protoQ)));
                 // Block the agent thread until the webview answers; on cancel/close,
                 // abort rather than fabricating an answer.
                 Optional<String> answer = control.awaitGate(gateId);
                 emit.accept(new GateClosed(sessionId, gateId));
                 if (control.isCancelled() || control.isClosed()) {
-                    question.complete("");
+                    question.complete(approval ? "No" : "");
+                } else if (approval) {
+                    // The webview's Approve sends an empty answer; the SDK needs "Yes".
+                    question.complete("Yes");
                 } else {
                     question.complete(resolveAnswer(answer, question));
                 }
