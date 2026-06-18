@@ -14,6 +14,7 @@ dependencies {
     implementation(enforcedPlatform("${quarkusPlatformGroupId}:${quarkusPlatformArtifactId}:${quarkusPlatformVersion}"))
     implementation("io.quarkus:quarkus-rest")
     implementation("io.quarkus:quarkus-rest-jackson")
+    implementation("io.quarkus:quarkus-websockets-next")
     implementation("io.quarkus:quarkus-arc")
     implementation("org.jboss.slf4j:slf4j-jboss-logmanager")
     implementation("io.quarkus:quarkus-hibernate-orm-panache")
