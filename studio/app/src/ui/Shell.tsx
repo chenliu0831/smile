@@ -17,23 +17,33 @@ import { Topbar } from "./Topbar";
 import { RunZones } from "./RunView";
 import { NotebookPanel } from "./NotebookPanel";
 import { KernelPanel } from "./KernelPanel";
+import { DataPanel } from "./DataPanel";
 
-const LAYOUT_KEY = "smile.studio.layout.v1";
+// Bump the layout key when the default panel set changes so stale saved layouts
+// (missing new panels like Data) don't hide them on reload.
+const LAYOUT_KEY = "smile.studio.layout.v2";
 
 // Panel components keyed by id. dockview instantiates these inside its panels;
 // each is just our existing surface, so the Run view streams exactly as before.
 const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   run: () => <RunZones />,
+  data: () => <DataPanel />,
   notebook: () => <NotebookPanel />,
   kernel: () => <KernelPanel />,
 };
 
-/** Build the default layout: Run home, with Notebook + Kernel as peer tabs. */
+/** Build the default layout: Run home, with Data / Notebook / Kernel as peers. */
 function addDefaultPanels(event: DockviewReadyEvent) {
   const run = event.api.addPanel({
     id: "run",
     component: "run",
     title: "AutoML Run",
+  });
+  event.api.addPanel({
+    id: "data",
+    component: "data",
+    title: "Data",
+    position: { referencePanel: run, direction: "within" },
   });
   event.api.addPanel({
     id: "notebook",

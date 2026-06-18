@@ -39,6 +39,11 @@ export class MockRunPlayer {
     };
   }
 
+  /** No real daemon backs the mock, so dataset insights are unavailable. */
+  httpBase(): string | null {
+    return null;
+  }
+
   /** Emit the greeting; the scripted run waits for the first user message. */
   start(): void {
     this.emit({ type: "session-started", sessionId: "mock", greeting: this.greeting });

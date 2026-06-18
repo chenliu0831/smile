@@ -8,11 +8,14 @@
  * (the daemon verifies it on connect, ADR-0002).
  */
 import type { DaemonMessage } from "./protocol";
+import { httpBaseFromWs } from "./datasetInfo";
 
 type Listener = (msg: DaemonMessage) => void;
 
 export interface RunConnection {
   subscribe(fn: Listener): () => void;
+  /** Daemon HTTP base (e.g. http://127.0.0.1:PORT/api/v1), or null for the mock. */
+  httpBase(): string | null;
   /** Open the session. Called AFTER subscribe so no early message is missed. */
   start(): void;
   /** Send a free-text user turn (starts or continues the conversation). */
@@ -33,7 +36,10 @@ export class WebSocketRunConnection implements RunConnection {
   private queue: unknown[] = [];
   private failed = false;
 
+  private readonly base: string;
+
   constructor(url: string, token?: string) {
+    this.base = httpBaseFromWs(url);
     const full = token ? `${url}?token=${encodeURIComponent(token)}` : url;
     this.ws = new WebSocket(full);
     this.ws.onopen = () => {
@@ -72,6 +78,10 @@ export class WebSocketRunConnection implements RunConnection {
     return () => {
       this.listeners = this.listeners.filter((l) => l !== fn);
     };
+  }
+
+  httpBase(): string | null {
+    return this.base;
   }
 
   /** No-op: the conversation begins when the first user message is sent. */

@@ -2,6 +2,7 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../daemon/runState";
 import { connectRun } from "../daemon/connect";
 import { pickAndLoadDataset, canLoadDataset, type LoadedDataset } from "../daemon/dataset";
+import { fetchDatasetInfo, type DatasetInfo } from "../daemon/datasetInfo";
 import type { RunConnection } from "../daemon/wsClient";
 import type { DaemonMessage } from "../daemon/protocol";
 
@@ -9,6 +10,8 @@ export interface RunController {
   state: RunState;
   /** The dataset currently in scope (staged into the agent's input/), if any. */
   dataset: LoadedDataset | null;
+  /** Native schema + preview of the loaded dataset (from the daemon), if available. */
+  datasetInfo: DatasetInfo | null;
   /** Whether dataset loading is available (desktop app only). */
   canLoadDataset: boolean;
   /** Prompt for a dataset file, stage it, and restart the session against it. */
@@ -46,6 +49,7 @@ export function useRun(): RunController {
   const [, force] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [dataset, setDataset] = useState<LoadedDataset | null>(null);
+  const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
   const workingDirRef = useRef<string>(".");
 
   useEffect(() => {
@@ -68,6 +72,15 @@ export function useRun(): RunController {
         }
       });
       conn.start();
+      // If a real daemon is attached, fetch native dataset insights (P3).
+      const base = conn.httpBase();
+      if (base) {
+        fetchDatasetInfo(base).then((info) => {
+          if (!disposed) setDatasetInfo(info);
+        });
+      } else {
+        setDatasetInfo(null);
+      }
       if (auto) {
         // Kick off the scripted conversation without a human typing.
         setTimeout(() => {
@@ -87,6 +100,7 @@ export function useRun(): RunController {
   return {
     state,
     dataset,
+    datasetInfo,
     canLoadDataset: canLoadDataset(),
     loadDataset: async () => {
       const loaded = await pickAndLoadDataset();

@@ -56,17 +56,23 @@ public class RunService {
     String model;
 
     /** Base URL for the OpenAI-compatible {@code bedrock} provider (Bedrock gateway endpoint). */
-    @ConfigProperty(name = "smile.daemon.llm.baseUrl", defaultValue = "")
-    String baseUrl;
+    @ConfigProperty(name = "smile.daemon.llm.baseUrl")
+    java.util.Optional<String> baseUrlOpt;
 
-    /** Per-session WS token (ADR-0002). Empty disables auth (dev). */
-    @ConfigProperty(name = "smile.daemon.token", defaultValue = "")
-    String token;
+    /** Per-session WS token (ADR-0002). Absent disables auth (dev). */
+    @ConfigProperty(name = "smile.daemon.token")
+    java.util.Optional<String> tokenOpt;
 
     /** Greeting the agent session opens with. */
-    @ConfigProperty(name = "smile.daemon.greeting",
-            defaultValue = "Hi, I'm Clair — your data-science analyst. Load a dataset or ask me to analyze one, and I'll take it from there.")
-    String greeting;
+    @ConfigProperty(name = "smile.daemon.greeting")
+    java.util.Optional<String> greetingOpt;
+
+    private String baseUrl() { return baseUrlOpt.orElse(""); }
+    private String token() { return tokenOpt.orElse(""); }
+    private String greeting() {
+        return greetingOpt.orElse(
+                "Hi, I'm Clair — your data-science analyst. Load a dataset or ask me to analyze one, and I'll take it from there.");
+    }
 
     /**
      * Verifies the connection's token against the configured session token (ADR-0002).
@@ -76,8 +82,9 @@ public class RunService {
      * @param queryToken token from the {@code ?token=} query parameter.
      */
     public boolean authorize(String pathToken, String queryToken) {
-        if (token == null || token.isBlank()) return true;
-        return token.equals(queryToken) || token.equals(pathToken);
+        String t = token();
+        if (t.isBlank()) return true;
+        return t.equals(queryToken) || t.equals(pathToken);
     }
 
     /**
@@ -96,7 +103,7 @@ public class RunService {
         if ("agent".equalsIgnoreCase(engine)) {
             String sessionId = "session-" + Long.toHexString(System.nanoTime());
             Path cwd = Path.of(System.getProperty("user.dir"));
-            return new AgentRunSource(sessionId, cwd, this::newLlm, greeting);
+            return new AgentRunSource(sessionId, cwd, this::newLlm, greeting());
         }
         return new ScriptedRunSource(STEP_MILLIS);
     }
@@ -114,11 +121,12 @@ public class RunService {
                 throw new IllegalStateException(
                         "bedrock provider requires the AWS_BEARER_TOKEN_BEDROCK environment variable");
             }
-            if (baseUrl == null || baseUrl.isBlank()) {
+            String url = baseUrl();
+            if (url.isBlank()) {
                 throw new IllegalStateException(
                         "bedrock provider requires smile.daemon.llm.baseUrl (the Bedrock OpenAI-compatible endpoint)");
             }
-            return new ChatCompletions(baseUrl, token, model);
+            return new ChatCompletions(url, token, model);
         }
         return LLM.of(provider, model);
     }
