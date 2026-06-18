@@ -2,15 +2,23 @@
  * The AutoML Run view (ADR-0006): three coordinated zones — pipeline timeline,
  * artifact canvas, agent stream — driven by a single RunState. Progressive
  * disclosure: calm by default, every layer one click away.
+ *
+ * `RunZones` is the three-zone body, reused inside the dockview shell's Run
+ * panel (ADR-0008). It reads the shared RunController from RunContext, so the
+ * topbar (chrome) and the panel see one Run. `RunView` keeps the legacy
+ * standalone composition (its own provider + topbar + zones) so existing
+ * usage/tests stay intact.
  */
 import { useState } from "react";
-import { useRun } from "../automl/useRun";
+import { RunProvider, useRunContext } from "../automl/RunContext";
+import { Topbar } from "./Topbar";
 import { Timeline } from "./Timeline";
 import { Canvas } from "./Canvas";
 import { AgentStream } from "./AgentStream";
 
-export function RunView() {
-  const { state, resolveGate } = useRun();
+/** The three-zone Run body (timeline / canvas / agent stream), no chrome. */
+export function RunZones() {
+  const { state, resolveGate } = useRunContext();
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
 
   // When a stage is selected, the canvas focuses its artifacts; otherwise show all.
@@ -20,26 +28,37 @@ export function RunView() {
     : Object.values(state.artifacts);
 
   return (
-    <div className="app">
-      <div className="topbar">
-        <span className="brand">Smile<span className="dot">.</span>Studio</span>
-        <span className="goal">{state.goal || "AutoML"}</span>
-        <span className="spacer" />
-        <span className={`status-pill ${state.status}`}>
-          {state.status === "running" ? "Running" : state.status === "completed" ? "Completed" : state.status}
-        </span>
-      </div>
-      <div className="run">
-        <Timeline stages={state.stages} selectedId={selectedStage} onSelect={(id) =>
-          setSelectedStage(id === selectedStage ? null : id)} />
-        <Canvas artifacts={visibleArtifacts} />
-        <AgentStream
-          agentText={state.agentText}
-          toolCalls={state.toolCalls}
-          openGates={state.openGates}
-          onResolveGate={resolveGate}
-        />
-      </div>
+    <div className="run">
+      <Timeline
+        stages={state.stages}
+        selectedId={selectedStage}
+        onSelect={(id) => setSelectedStage(id === selectedStage ? null : id)}
+      />
+      <Canvas artifacts={visibleArtifacts} />
+      <AgentStream
+        agentText={state.agentText}
+        toolCalls={state.toolCalls}
+        openGates={state.openGates}
+        onResolveGate={resolveGate}
+      />
     </div>
+  );
+}
+
+function RunViewInner() {
+  const { state } = useRunContext();
+  return (
+    <div className="app">
+      <Topbar state={state} />
+      <RunZones />
+    </div>
+  );
+}
+
+export function RunView() {
+  return (
+    <RunProvider>
+      <RunViewInner />
+    </RunProvider>
   );
 }

@@ -1,5 +1,5 @@
-import { RunView } from "./ui/RunView";
+import { Shell } from "./ui/Shell";
 
 export function App() {
-  return <RunView />;
+  return <Shell />;
 }
