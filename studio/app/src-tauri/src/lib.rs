@@ -84,6 +84,8 @@ pub fn build_daemon_invocation(
         format!("-Dquarkus.http.port={port}"),
         // The daemon's AutoML WS needs no database; keep startup lean and dependency-free.
         "-Dquarkus.hibernate-orm.active=false".into(),
+        // CORS for the webview origins is baked into the daemon's application.properties
+        // (it's a Quarkus build-time property, so runtime -D would have no effect).
         "-Dsmile.daemon.engine=agent".into(),
         format!("-Dsmile.daemon.llm.provider={}", cfg.provider),
         format!("-Dsmile.daemon.llm.model={}", cfg.model),

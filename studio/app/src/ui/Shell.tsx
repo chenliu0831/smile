@@ -18,21 +18,23 @@ import { RunZones } from "./RunView";
 import { NotebookPanel } from "./NotebookPanel";
 import { KernelPanel } from "./KernelPanel";
 import { DataPanel } from "./DataPanel";
+import { DataExplorer } from "./DataExplorer";
 
 // Bump the layout key when the default panel set changes so stale saved layouts
-// (missing new panels like Data) don't hide them on reload.
-const LAYOUT_KEY = "smile.studio.layout.v2";
+// (missing new panels) don't hide them on reload.
+const LAYOUT_KEY = "smile.studio.layout.v3";
 
 // Panel components keyed by id. dockview instantiates these inside its panels;
 // each is just our existing surface, so the Run view streams exactly as before.
 const components: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {
   run: () => <RunZones />,
   data: () => <DataPanel />,
+  explore: () => <DataExplorer />,
   notebook: () => <NotebookPanel />,
   kernel: () => <KernelPanel />,
 };
 
-/** Build the default layout: Run home, with Data / Notebook / Kernel as peers. */
+/** Build the default layout: Run home, with Data / Explore / Notebook / Kernel as peers. */
 function addDefaultPanels(event: DockviewReadyEvent) {
   const run = event.api.addPanel({
     id: "run",
@@ -43,6 +45,12 @@ function addDefaultPanels(event: DockviewReadyEvent) {
     id: "data",
     component: "data",
     title: "Data",
+    position: { referencePanel: run, direction: "within" },
+  });
+  event.api.addPanel({
+    id: "explore",
+    component: "explore",
+    title: "Explore",
     position: { referencePanel: run, direction: "within" },
   });
   event.api.addPanel({
@@ -83,6 +91,16 @@ function Dock() {
     if (!restored || event.api.panels.length === 0) {
       event.api.clear();
       addDefaultPanels(event);
+    }
+
+    // Deep-link / screenshot aid: ?panel=<id> activates that panel on load.
+    const panelHint =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("panel")
+        : null;
+    if (panelHint) {
+      const p = event.api.getPanel(panelHint);
+      if (p) p.api.setActive();
     }
 
     // Persist on any layout change (move/resize/add/remove/tab switch).

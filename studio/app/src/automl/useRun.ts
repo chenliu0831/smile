@@ -12,6 +12,8 @@ export interface RunController {
   dataset: LoadedDataset | null;
   /** Native schema + preview of the loaded dataset (from the daemon), if available. */
   datasetInfo: DatasetInfo | null;
+  /** Daemon HTTP base for direct fetches (e.g. the explorer's full-data load), or null. */
+  httpBase: string | null;
   /** Whether dataset loading is available (desktop app only). */
   canLoadDataset: boolean;
   /** Prompt for a dataset file, stage it, and restart the session against it. */
@@ -50,6 +52,7 @@ export function useRun(): RunController {
   const [generation, setGeneration] = useState(0);
   const [dataset, setDataset] = useState<LoadedDataset | null>(null);
   const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
+  const [httpBase, setHttpBase] = useState<string | null>(null);
   const workingDirRef = useRef<string>(".");
 
   useEffect(() => {
@@ -74,6 +77,7 @@ export function useRun(): RunController {
       conn.start();
       // If a real daemon is attached, fetch native dataset insights (P3).
       const base = conn.httpBase();
+      setHttpBase(base);
       if (base) {
         fetchDatasetInfo(base).then((info) => {
           if (!disposed) setDatasetInfo(info);
@@ -101,6 +105,7 @@ export function useRun(): RunController {
     state,
     dataset,
     datasetInfo,
+    httpBase,
     canLoadDataset: canLoadDataset(),
     loadDataset: async () => {
       const loaded = await pickAndLoadDataset();

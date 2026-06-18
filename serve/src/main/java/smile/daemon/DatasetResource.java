@@ -52,6 +52,8 @@ import smile.io.Read;
 public class DatasetResource {
     private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(DatasetResource.class);
     private static final int MAX_PREVIEW_ROWS = 1000;
+    /** Cap for the explorer's full-data fetch — protects the daemon/browser from huge frames. */
+    private static final int MAX_FULL_ROWS = 50_000;
 
     /** Schema info for one column. */
     public record ColumnInfo(String name, String type) {}
@@ -69,17 +71,20 @@ public class DatasetResource {
      * Loads the single dataset in {@code <cwd>/input/} and returns its insights.
      *
      * @param rows preview row cap (default {@value #MAX_PREVIEW_ROWS}).
+     * @param full when true, return up to {@value #MAX_FULL_ROWS} rows for the explorer
+     *             (live pivot/filter/aggregate needs the whole frame, not a preview).
      */
     @GET
     @Produces(MediaType.APPLICATION_JSON)
-    public DatasetInfo dataset(@QueryParam("rows") Integer rows) {
+    public DatasetInfo dataset(@QueryParam("rows") Integer rows, @QueryParam("full") boolean full) {
         Path file = findDataset();
         if (file == null) {
             throw new NotFoundException("No dataset found in input/");
         }
         try {
             DataFrame df = load(file);
-            int limit = Math.min(rows != null && rows > 0 ? rows : MAX_PREVIEW_ROWS, MAX_PREVIEW_ROWS);
+            int cap = full ? MAX_FULL_ROWS : MAX_PREVIEW_ROWS;
+            int limit = Math.min(rows != null && rows > 0 ? rows : cap, cap);
             limit = Math.min(limit, df.nrow());
 
             StructType schema = df.schema();

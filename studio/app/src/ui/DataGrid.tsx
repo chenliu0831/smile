@@ -37,6 +37,9 @@ function loadPerspective(): Promise<PerspectiveModule> {
         import("@finos/perspective-viewer"),
       ]);
       await import("@finos/perspective-viewer-datagrid");
+      // The d3fc plugin adds Sigma-style chart views (scatter/line/bar/heatmap) the
+      // explorer can switch to from the plugin picker.
+      await import("@finos/perspective-viewer-d3fc");
       await import("@finos/perspective-viewer/dist/css/pro-dark.css");
       const [{ default: SERVER_WASM }, { default: CLIENT_WASM }] = await Promise.all([
         import("@finos/perspective/dist/wasm/perspective-server.wasm?url"),
@@ -52,7 +55,18 @@ function loadPerspective(): Promise<PerspectiveModule> {
   return perspectivePromise;
 }
 
-export function DataGrid({ data, height = 360 }: { data: DataGridData; height?: number }) {
+export interface DataGridProps {
+  data: DataGridData;
+  height?: number;
+  /** Show Perspective's pivot/filter/aggregate sidebar (the Sigma-style explorer chrome). */
+  settings?: boolean;
+  /** Initial plugin ("Datagrid", "X/Y Scatter", "Y Bar", "Y Line", "Heatmap", …). */
+  plugin?: string;
+  /** Optional initial view config (group_by / split_by / aggregates / filter / sort). */
+  config?: Record<string, unknown>;
+}
+
+export function DataGrid({ data, height = 360, settings = false, plugin = "Datagrid", config }: DataGridProps) {
   const ref = useRef<HTMLPerspectiveViewerElement | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -72,9 +86,10 @@ export function DataGrid({ data, height = 360 }: { data: DataGridData; height?: 
         viewerEl = ref.current;
         await viewerEl.load(Promise.resolve(table));
         await viewerEl.restore({
-          plugin: "Datagrid",
+          plugin,
           theme: "Pro Dark",
-          settings: false,
+          settings,
+          ...(config ?? {}),
         });
       } catch (e) {
         if (!disposed) setError(e instanceof Error ? e.message : String(e));
@@ -86,7 +101,7 @@ export function DataGrid({ data, height = 360 }: { data: DataGridData; height?: 
       // Best-effort teardown; viewer.delete() also frees the backing table.
       viewerEl?.delete?.().catch(() => {});
     };
-  }, [data]);
+  }, [data, settings, plugin, config]);
 
   if (error) {
     return (

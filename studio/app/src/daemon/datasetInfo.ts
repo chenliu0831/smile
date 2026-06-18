@@ -26,10 +26,14 @@ export function httpBaseFromWs(wsUrl: string): string {
   return `${proto}//${u.host}/api/v1`;
 }
 
-/** Fetch the dataset insights, or null if none is loaded / the daemon is unavailable. */
-export async function fetchDatasetInfo(httpBase: string): Promise<DatasetInfo | null> {
+/**
+ * Fetch the dataset insights, or null if none is loaded / the daemon is unavailable.
+ * `full` requests the whole frame (capped daemon-side) for the interactive explorer;
+ * the default returns a bounded preview for the Data panel.
+ */
+export async function fetchDatasetInfo(httpBase: string, full = false): Promise<DatasetInfo | null> {
   try {
-    const res = await fetch(`${httpBase}/dataset`);
+    const res = await fetch(`${httpBase}/dataset${full ? "?full=true" : ""}`);
     if (!res.ok) return null;
     return (await res.json()) as DatasetInfo;
   } catch {
