@@ -18,6 +18,7 @@ package smile.daemon;
 
 import java.util.List;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 /**
  * The typed daemon-to-webview protocol (ADR-0002, ADR-0006). The JSON shapes here
@@ -31,7 +32,12 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public sealed interface DaemonMessage {
-    /** The discriminator field shared by every message. */
+    /**
+     * The discriminator field shared by every message. Annotated so Jackson emits
+     * it as a JSON property — record serialization only includes record components,
+     * not interface methods, so without this the wire frame would omit {@code type}.
+     */
+    @JsonProperty("type")
     String type();
 
     /** A pipeline stage's status (matches StageStatus in protocol.ts). */

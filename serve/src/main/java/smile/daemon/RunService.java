@@ -16,14 +16,16 @@
  */
 package smile.daemon;
 
+import java.nio.file.Path;
 import java.util.function.Consumer;
 import jakarta.enterprise.context.ApplicationScoped;
+import org.eclipse.microprofile.config.inject.ConfigProperty;
 
 /**
- * Supplies the {@link RunSource} that drives AutoML Runs. This is the single binding
- * point to switch from the bundled {@link ScriptedRunSource} to an agent-backed source
- * once the {@code ioa-agent} jar and LLM credentials are available (ADR-0005). No other
- * class — neither the transport nor the frontend — changes when the engine is swapped.
+ * Supplies the {@link RunSource} that drives AutoML Runs (ADR-0005). Selects between
+ * the bundled {@link ScriptedRunSource} (default; demo/offline/tests) and the
+ * agent-backed {@link AgentRunSource} (Clair's {@code automl} skill) based on
+ * {@code smile.daemon.engine}. No transport or frontend code changes when switching.
  *
  * @author Haifeng Li
  */
@@ -32,12 +34,26 @@ public class RunService {
     /** Emission pacing for the scripted source, in milliseconds. */
     private static final long STEP_MILLIS = 300;
 
+    /** {@code scripted} (default) or {@code agent}. */
+    @ConfigProperty(name = "smile.daemon.engine", defaultValue = "scripted")
+    String engine;
+
+    /** LLM provider for the agent engine: {@code anthropic} | {@code openai} | {@code gemini}. */
+    @ConfigProperty(name = "smile.daemon.llm.provider", defaultValue = "anthropic")
+    String provider;
+
+    /** LLM model id for the agent engine. */
+    @ConfigProperty(name = "smile.daemon.llm.model", defaultValue = "claude-opus-4-8")
+    String model;
+
+    /** Default analysis prompt for the agent engine when the webview sends none. */
+    @ConfigProperty(name = "smile.daemon.prompt",
+            defaultValue = "Run AutoML on the dataset in the current working directory and report the best model.")
+    String prompt;
+
     /**
      * Starts a run on a worker thread, delivering messages to {@code emit} and reading
      * gate/cancel signals from {@code control}.
-     *
-     * @param emit    sink for outbound {@link DaemonMessage}s.
-     * @param control control channel for the run.
      */
     public void start(Consumer<DaemonMessage> emit, RunControl control) {
         RunSource source = newRunSource();
@@ -46,11 +62,13 @@ public class RunService {
         worker.start();
     }
 
-    /**
-     * Creates the active {@link RunSource}. Override/replace this to bind the
-     * agent-backed source (the {@code automl} skill stream).
-     */
+    /** Creates the active {@link RunSource} per the {@code smile.daemon.engine} setting. */
     protected RunSource newRunSource() {
+        if ("agent".equalsIgnoreCase(engine)) {
+            String runId = "run-" + Long.toHexString(System.nanoTime());
+            Path cwd = Path.of(System.getProperty("user.dir"));
+            return new AgentRunSource(runId, prompt, cwd, provider, model);
+        }
         return new ScriptedRunSource(STEP_MILLIS);
     }
 }
