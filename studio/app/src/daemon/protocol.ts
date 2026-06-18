@@ -98,9 +98,29 @@ export interface Gate {
   question?: Question;
 }
 
-/** Discriminated union of everything the daemon streams for a Run. */
+/** One turn in the conversation transcript (ADR-0006, interactive chat). */
+export interface ChatTurn {
+  id: string;
+  role: "user" | "agent";
+  /** Accumulated text — the user's prompt, or the agent's streamed response. */
+  text: string;
+  /** Agent turns: the tool calls made while producing this turn. */
+  toolCalls: ToolCall[];
+  status: "streaming" | "done" | "failed";
+}
+
+/**
+ * Discriminated union of everything the daemon streams. The session is a multi-turn
+ * conversation (ADR-0006): `session-started` once, then per user turn the daemon emits
+ * `turn-started` (agent), then a stream of `agent-chunk` / `tool-call` / `gate-opened`,
+ * then `turn-finished`. Stages and artifacts accumulate at the session level.
+ */
 export type DaemonMessage =
+  | { type: "session-started"; sessionId: string; greeting?: string }
+  // Legacy single-run start (mock + scripted source still emit it); treated as session start.
   | { type: "run-started"; runId: string; goal: string; stages: StageProgress[] }
+  | { type: "turn-started"; turnId: string; role: "agent" }
+  | { type: "turn-finished"; turnId: string; status: "done" | "failed"; outputTokens?: number }
   | { type: "stage-progress"; runId: string; stage: StageProgress }
   | { type: "agent-chunk"; runId: string; text: string }
   | { type: "tool-call"; runId: string; call: ToolCall }
@@ -109,9 +129,12 @@ export type DaemonMessage =
   | { type: "gate-closed"; runId: string; gateId: string }
   | { type: "run-finished"; runId: string; status: "completed" | "failed" | "cancelled" };
 
-/** Replies the Webview sends back (relayed via the Shell for control actions). */
+/** Replies the Webview sends back over the WebSocket. */
 export type WebviewReply =
-  | { type: "answer"; runId: string; questionId: string; answer: string }
-  | { type: "approve"; runId: string; gateId: string }
-  | { type: "reject"; runId: string; gateId: string }
-  | { type: "cancel-run"; runId: string };
+  // A free-text user turn — starts the session's first turn or continues the chat.
+  | { type: "user-message"; text: string }
+  // A clarify-gate answer carrying the user's free text (or chosen option).
+  | { type: "answer"; gateId: string; answer: string }
+  | { type: "approve"; gateId: string }
+  | { type: "reject"; gateId: string }
+  | { type: "cancel-run" };

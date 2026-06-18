@@ -50,7 +50,7 @@ public class ScriptedRunSourceTest {
                 "must not finish before the gate is resolved");
 
         // When the gate is resolved.
-        control.resolveGate("g-metric");
+        control.resolveGate("g-metric", "AUC");
         worker.join(3000);
 
         // Then the run completes and the gate was closed.

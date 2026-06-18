@@ -41,6 +41,7 @@ const LEADERBOARD_MD = `
 /** The full scripted run, in emission order. */
 export const churnRunScript: DaemonMessage[] = [
   { type: "run-started", runId: RUN_ID, goal: "Predict customer churn from telco.csv", stages: STAGES },
+  { type: "turn-started", turnId: "agent-turn-1", role: "agent" },
 
   // Clarify gate — the skill "asks once" for the primary metric.
   { type: "agent-chunk", runId: RUN_ID, text: "I'll build a churn classifier. Before I start, one quick question.\n" },
@@ -102,6 +103,7 @@ export const churnRunScript: DaemonMessage[] = [
   { type: "artifact", runId: RUN_ID, artifact: { ref: "report", kind: "report", title: "AutoML Report", body: "# AutoML Report\n\n## Final Performance\nTest **AUC 0.921** (ensemble) vs baseline 0.842 — **+9.4%**.\n\n## Final Solution\nHill-climbing ensemble: LightGBM + XGBoost + MLP, seed 42.\n\n## Key Insights\n1. `Contract` and `tenure` dominate churn risk.\n2. Month-to-month contracts drive most positive predictions.\n3. Tuning added +0.5% AUC; ensembling added +0.6%.\n" } },
   stage("report", "done", "report ready", ["report"]),
 
+  { type: "turn-finished", turnId: "agent-turn-1", status: "done" },
   { type: "run-finished", runId: RUN_ID, status: "completed" },
 ];
 

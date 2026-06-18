@@ -61,11 +61,16 @@ fn token_env_var(provider: &str) -> &'static str {
     }
 }
 
-/// Builds the daemon JVM invocation from config + token + deployment paths + port.
+/// Builds the daemon JVM invocation from config + credential + session token + paths.
 /// Pure: no I/O, no process spawn — this is the unit under test.
+///
+/// `credential` is the LLM API key/bearer token (goes to the provider's env var, never
+/// logged). `session_token` is the WS auth token (ADR-0002): passed as a JVM property so
+/// the daemon enforces it, and also returned to the Webview so it can present it.
 pub fn build_daemon_invocation(
     cfg: &LlmConfig,
-    token: &str,
+    credential: &str,
+    session_token: &str,
     jar: &str,
     smile_home: &str,
     port: u16,
@@ -86,14 +91,27 @@ pub fn build_daemon_invocation(
     if !cfg.base_url.is_empty() {
         args.push(format!("-Dsmile.daemon.llm.baseUrl={}", cfg.base_url));
     }
+    if !session_token.is_empty() {
+        args.push(format!("-Dsmile.daemon.token={session_token}"));
+    }
     args.push("-jar".into());
     args.push(jar.into());
 
     let mut env = Vec::new();
-    if !token.is_empty() {
-        env.push((token_env_var(&cfg.provider).to_string(), token.to_string()));
+    if !credential.is_empty() {
+        env.push((token_env_var(&cfg.provider).to_string(), credential.to_string()));
     }
     DaemonInvocation { args, env }
+}
+
+/// Generates a random hex session token from the OS RNG (no extra crate needed).
+fn generate_session_token() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    // Combine two RandomState-seeded hashers (each seeded from OS entropy) for 128 bits.
+    let a = RandomState::new().build_hasher().finish();
+    let b = RandomState::new().build_hasher().finish();
+    format!("{a:016x}{b:016x}")
 }
 
 /// Live daemon process + port, held in Tauri managed state.
@@ -103,6 +121,7 @@ pub struct DaemonState(Mutex<Option<RunningDaemon>>);
 pub struct RunningDaemon {
     child: Child,
     port: u16,
+    token: String,
 }
 
 fn free_port() -> Result<u16, String> {
@@ -129,7 +148,7 @@ fn wait_until_listening(port: u16, timeout: Duration) -> bool {
 fn daemon_info(state: State<DaemonState>) -> DaemonInfo {
     let guard = state.0.lock().unwrap();
     match guard.as_ref() {
-        Some(d) => DaemonInfo { port: d.port, token: String::new(), attached: true },
+        Some(d) => DaemonInfo { port: d.port, token: d.token.clone(), attached: true },
         None => DaemonInfo { port: 0, token: String::new(), attached: false },
     }
 }
@@ -180,14 +199,15 @@ fn start_daemon(
     {
         let guard = state.0.lock().unwrap();
         if let Some(d) = guard.as_ref() {
-            return Ok(DaemonInfo { port: d.port, token: String::new(), attached: true });
+            return Ok(DaemonInfo { port: d.port, token: d.token.clone(), attached: true });
         }
     }
 
     let cfg = get_llm_config(app)?;
-    let token = Entry::new(KEYRING_SERVICE, KEYRING_USER)
+    let credential = Entry::new(KEYRING_SERVICE, KEYRING_USER)
         .and_then(|e| e.get_password())
         .unwrap_or_default();
+    let session_token = generate_session_token();
 
     // Deployment paths: env-overridable, dev defaults relative to the repo.
     let jar = std::env::var("SMILE_DAEMON_JAR")
@@ -195,7 +215,7 @@ fn start_daemon(
     let smile_home = std::env::var("SMILE_HOME").unwrap_or_else(|_| "../..".into());
 
     let port = free_port()?;
-    let inv = build_daemon_invocation(&cfg, &token, &jar, &smile_home, port);
+    let inv = build_daemon_invocation(&cfg, &credential, &session_token, &jar, &smile_home, port);
 
     let mut cmd = Command::new("java");
     cmd.args(&inv.args).current_dir(&working_dir);
@@ -208,8 +228,8 @@ fn start_daemon(
         return Err("daemon did not start listening within 60s".into());
     }
 
-    *state.0.lock().unwrap() = Some(RunningDaemon { child, port });
-    Ok(DaemonInfo { port, token: String::new(), attached: true })
+    *state.0.lock().unwrap() = Some(RunningDaemon { child, port, token: session_token.clone() });
+    Ok(DaemonInfo { port, token: session_token, attached: true })
 }
 
 #[tauri::command]
@@ -260,10 +280,11 @@ mod tests {
     }
 
     #[test]
-    fn bedrock_invocation_sets_engine_provider_baseurl_and_bearer_env() {
+    fn bedrock_invocation_sets_engine_provider_baseurl_bearer_env_and_session_token() {
         let inv = build_daemon_invocation(
             &cfg("bedrock", "https://bedrock/v1", "openai.gpt-oss-120b"),
             "tok-123",
+            "sess-xyz",
             "/x/quarkus-run.jar",
             "/repo",
             9999,
@@ -273,7 +294,10 @@ mod tests {
         assert!(inv.args.contains(&"-Dsmile.daemon.llm.baseUrl=https://bedrock/v1".to_string()));
         assert!(inv.args.contains(&"-Dsmile.daemon.llm.model=openai.gpt-oss-120b".to_string()));
         assert!(inv.args.contains(&"-Dquarkus.http.port=9999".to_string()));
+        assert!(inv.args.contains(&"-Dsmile.daemon.token=sess-xyz".to_string()));
+        // The LLM credential goes to the provider env var, never an arg.
         assert_eq!(inv.env, vec![("AWS_BEARER_TOKEN_BEDROCK".to_string(), "tok-123".to_string())]);
+        assert!(!inv.args.iter().any(|a| a.contains("tok-123")));
         // jar is the last arg, preceded by -jar
         assert_eq!(inv.args.last().unwrap(), "/x/quarkus-run.jar");
     }
@@ -283,6 +307,7 @@ mod tests {
         let inv = build_daemon_invocation(
             &cfg("anthropic", "", "claude-opus-4-8"),
             "sk-ant",
+            "sess",
             "/x.jar",
             "/repo",
             8000,
@@ -292,10 +317,19 @@ mod tests {
     }
 
     #[test]
-    fn missing_token_yields_no_env_override() {
+    fn missing_credential_yields_no_env_override_but_keeps_session_token() {
         let inv = build_daemon_invocation(
-            &cfg("bedrock", "u", "m"), "", "/x.jar", "/repo", 8000,
+            &cfg("bedrock", "u", "m"), "", "sess", "/x.jar", "/repo", 8000,
         );
         assert!(inv.env.is_empty());
+        assert!(inv.args.contains(&"-Dsmile.daemon.token=sess".to_string()));
+    }
+
+    #[test]
+    fn session_tokens_are_unique_and_nonempty() {
+        let a = generate_session_token();
+        let b = generate_session_token();
+        assert!(!a.is_empty());
+        assert_ne!(a, b);
     }
 }

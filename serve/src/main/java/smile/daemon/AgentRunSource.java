@@ -17,8 +17,10 @@
 package smile.daemon;
 
 import java.nio.file.Path;
-import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -30,148 +32,176 @@ import ioa.llm.tool.Tool;
 import smile.daemon.DaemonMessage.*;
 
 /**
- * The agent-backed {@link RunSource} (ADR-0005): drives Clair's {@code automl} skill
- * and translates the live agent stream into {@link DaemonMessage}s.
+ * The agent-backed, INTERACTIVE chat session (ADR-0005, ADR-0006). Constructs Clair
+ * (the Analyst agent) ONCE, then runs a multi-turn loop: await a user message, stream
+ * the agent's response for that turn, go idle, await the next message — reusing the
+ * same {@link ioa.llm.Conversation} so context accumulates across turns. One turn
+ * streams at a time (the Conversation is shared mutable state).
  *
- * <p>Mapping from the {@code ioa} agent callbacks to the protocol:
+ * <p>Callback → protocol mapping per turn:
  * <ul>
- *   <li>{@code onNext(text)} → {@link AgentChunk}</li>
- *   <li>{@code onToolCallStatus(tool, result)} → {@link ToolCallMsg} (collapsible card)</li>
- *   <li>{@code onQuestion(q)} → {@link GateOpened} (clarify); the webview's approval
- *       resolves the gate and completes the agent's {@link Question} future</li>
- *   <li>{@code onStatus(s)} → {@link AgentChunk} status line</li>
- *   <li>{@code onComplete}/{@code onException} → {@link RunFinished}</li>
+ *   <li>{@code onNext} → {@link AgentChunk}; {@code onStatus} → bracketed chunk</li>
+ *   <li>{@code onToolCallStatus} → {@link ToolCallMsg} (collapsible card)</li>
+ *   <li>{@code onQuestion} → {@link GateOpened}; the user's free-text answer resolves it
+ *       via {@link RunControl#awaitGate} and is passed to {@link Question#complete}</li>
+ *   <li>{@code onComplete}/{@code onException} → {@link TurnFinished}</li>
  * </ul>
- *
- * <p>The agent emits token/tool/question events, not the daemon's structured
- * stage/artifact messages, so a single synthetic stage tracks overall progress and
- * the run's deliverables surface as {@link ToolCallMsg} cards. Richer stage/artifact
- * extraction (parsing {@code state.json} / the skill's output files) is a follow-up.
  *
  * @author Haifeng Li
  */
 public class AgentRunSource implements RunSource {
     private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(AgentRunSource.class);
-    private final String runId;
-    private final String prompt;
+    private final String sessionId;
     private final Path workingDir;
     private final Supplier<LLM> llmFactory;
+    private final String greeting;
+    private final AtomicInteger seq = new AtomicInteger();
 
-    /**
-     * @param runId      id for the emitted messages.
-     * @param prompt     the analysis instruction for Clair.
-     * @param workingDir the agent's working directory (where datasets / outputs live).
-     * @param llmFactory builds the LLM client (provider/Bedrock wiring lives in the caller).
-     */
-    public AgentRunSource(String runId, String prompt, Path workingDir, Supplier<LLM> llmFactory) {
-        this.runId = runId;
-        this.prompt = prompt;
+    public AgentRunSource(String sessionId, Path workingDir, Supplier<LLM> llmFactory, String greeting) {
+        this.sessionId = sessionId;
         this.workingDir = workingDir;
         this.llmFactory = llmFactory;
+        this.greeting = greeting;
     }
 
     @Override
     public void run(Consumer<DaemonMessage> emit, RunControl control) {
-        Stage working = new Stage("automl", "AutoML (Clair)", StageStatus.running, List.of(), null);
-        emit.accept(new RunStarted(runId, prompt, List.of(working)));
+        emit.accept(new SessionStarted(sessionId, greeting));
 
         Agent agent;
         try {
             var spec = Agent.Spec.of("analyst");
             LLM llm = llmFactory.get();
             agent = new Agent(spec, () -> llm, workingDir);
-            // Clair's automl skill runs Python scripts and reads/writes files, so the
-            // conversation needs the file/shell/data/planning tool families enabled.
+            // Clair's skills run Python, read/write files, and visualize data.
             agent.conversation().addTools(Tool.file());
             agent.conversation().addTools(Tool.shell());
             agent.conversation().addTools(Tool.data());
             agent.conversation().addTools(Tool.planning());
         } catch (Throwable t) {
             LOG.error("Failed to initialize Clair agent", t);
-            emit.accept(new AgentChunk(runId, "Failed to initialize the agent: " + t.getMessage() + "\n"));
-            emit.accept(new StageProgress(runId, new Stage("automl", "AutoML (Clair)", StageStatus.failed, List.of(), t.getMessage())));
-            emit.accept(new RunFinished(runId, "failed"));
+            emit.accept(new AgentChunk(sessionId, "Failed to initialize the agent: " + t.getMessage()));
+            emit.accept(new RunFinished(sessionId, "failed"));
             return;
         }
 
-        var toolSeq = new AtomicInteger();
-        // agent.stream() dispatches the LLM call asynchronously and returns immediately;
-        // block run() until the handler reports terminal completion so this RunSource's
-        // lifecycle matches the actual run (and the WS stays open until the run ends).
+        // Multi-turn loop: one user message -> one streamed agent turn -> idle.
+        while (!control.isClosed()) {
+            Optional<String> next = control.takeUserMessage();
+            if (next.isEmpty()) break; // session closed
+            control.clearCancel();
+            streamTurn(agent, next.get(), emit, control);
+        }
+        LOG.debug("Chat session ended");
+    }
+
+    /**
+     * Stream a single user turn to completion. CRITICAL INVARIANT (verified against the
+     * SDK): {@code agent.stream} dispatches the LLM call on the SDK's own async thread
+     * and returns immediately; the handler's terminal callback ({@code onComplete}/
+     * {@code onException}) fires on that thread. This method must NOT return until that
+     * terminal callback has fired — otherwise the next turn's {@code agent.stream} would
+     * overlap this one on the shared mutable Conversation. Cancellation sets the
+     * round-boundary INTERRUPTED flag and then STILL waits for the terminal callback.
+     */
+    private void streamTurn(Agent agent, String userText, Consumer<DaemonMessage> emit, RunControl control) {
+        String turnId = "turn-" + seq.incrementAndGet();
+        emit.accept(new TurnStarted(turnId, "agent"));
         var doneLatch = new CountDownLatch(1);
+        // Guards a single TurnFinished + single latch countdown across the SDK threads.
+        var terminated = new AtomicBoolean(false);
+
+        // Reset the interrupt flag at the START of the turn (never in a finally that could
+        // run while the prior stream is still alive).
+        agent.conversation().params().setProperty(LLM.INTERRUPTED, "false");
+
         var handler = new StreamResponseHandler() {
             @Override
             public void onNext(String chunk) {
-                emit.accept(new AgentChunk(runId, chunk));
+                emit.accept(new AgentChunk(sessionId, chunk));
             }
 
             @Override
             public void onStatus(String status) {
                 if (status != null && !status.isBlank()) {
-                    emit.accept(new AgentChunk(runId, "\n[" + status + "]\n"));
+                    emit.accept(new AgentChunk(sessionId, "\n[" + status + "]\n"));
                 }
             }
 
             @Override
             public void onToolCallStatus(ioa.llm.tool.Tool tool, ioa.llm.tool.Tool.Result result) {
-                String id = "tc-" + toolSeq.incrementAndGet();
+                String id = "tc-" + seq.incrementAndGet();
                 boolean done = result != null;
                 String status = done ? (result.success() ? "done" : "failed") : "running";
                 String title = done && result.command() != null ? result.command()
                         : tool.getClass().getSimpleName();
                 String output = done ? result.output() : null;
-                emit.accept(new ToolCallMsg(runId, new ToolCall(id, title, "script", status, null, output, null)));
+                emit.accept(new ToolCallMsg(sessionId, new ToolCall(id, title, "script", status, null, output, null)));
             }
 
             @Override
             public void onQuestion(Question question) {
-                String gateId = "g-" + toolSeq.incrementAndGet();
+                String gateId = "g-" + seq.incrementAndGet();
                 var protoQ = new DaemonMessage.Question(gateId, question.question, question.choices);
                 String header = question.header != null ? question.header : "Needs your input";
-                emit.accept(new GateOpened(runId, new Gate(gateId, "clarify", header, protoQ)));
-                // Block the agent thread until the webview approves, then unblock the
-                // agent by completing its question future.
-                boolean ok = control.awaitGate(gateId);
-                emit.accept(new GateClosed(runId, gateId));
-                // Answer with the first choice when available, else a generic ack —
-                // V1 approval semantics; richer answer routing is a follow-up.
-                String answer = ok && question.choices != null && !question.choices.isEmpty()
-                        ? question.choices.get(0) : "proceed";
-                question.complete(answer);
+                emit.accept(new GateOpened(sessionId, new Gate(gateId, "clarify", header, protoQ)));
+                // Block the agent thread until the webview answers; on cancel/close,
+                // abort rather than fabricating an answer.
+                Optional<String> answer = control.awaitGate(gateId);
+                emit.accept(new GateClosed(sessionId, gateId));
+                if (control.isCancelled() || control.isClosed()) {
+                    question.complete("");
+                } else {
+                    question.complete(resolveAnswer(answer, question));
+                }
             }
 
             @Override
             public void onComplete(long total, long output, long input) {
-                emit.accept(new StageProgress(runId, new Stage("automl", "AutoML (Clair)", StageStatus.done, List.of(), output + " output tokens")));
-                emit.accept(new RunFinished(runId, "completed"));
-                doneLatch.countDown();
+                if (terminated.compareAndSet(false, true)) {
+                    emit.accept(new TurnFinished(turnId, "done", output));
+                    doneLatch.countDown();
+                }
             }
 
             @Override
             public void onException(Throwable ex) {
-                LOG.error("Agent run failed", ex);
-                emit.accept(new AgentChunk(runId, "\nError: " + ex.getMessage() + "\n"));
-                emit.accept(new StageProgress(runId, new Stage("automl", "AutoML (Clair)", StageStatus.failed, List.of(), ex.getMessage())));
-                emit.accept(new RunFinished(runId, "failed"));
-                doneLatch.countDown();
+                LOG.error("Agent turn failed", ex);
+                if (terminated.compareAndSet(false, true)) {
+                    emit.accept(new AgentChunk(sessionId, "\nError: " + ex.getMessage()));
+                    emit.accept(new TurnFinished(turnId, "failed", 0));
+                    doneLatch.countDown();
+                }
             }
         };
 
+        boolean interruptRequested = false;
         try {
-            agent.stream(prompt, handler);
-            // Wait for terminal completion; cancellation breaks the wait.
-            while (!doneLatch.await(250, java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                if (control.isCancelled()) {
-                    emit.accept(new RunFinished(runId, "cancelled"));
-                    return;
+            agent.stream(userText, handler);
+            // Wait for a terminal callback. On cancel/close, raise INTERRUPTED (consumed
+            // at the SDK's next round boundary) but KEEP waiting so the turn is quiescent
+            // before we return — preserving the one-turn-at-a-time invariant.
+            while (!doneLatch.await(200, TimeUnit.MILLISECONDS)) {
+                if (!interruptRequested && (control.isCancelled() || control.isClosed())) {
+                    agent.conversation().params().setProperty(LLM.INTERRUPTED, "true");
+                    interruptRequested = true;
                 }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         } catch (Throwable t) {
-            LOG.error("Agent run threw synchronously", t);
-            emit.accept(new AgentChunk(runId, "\nError: " + t.getMessage() + "\n"));
-            emit.accept(new RunFinished(runId, "failed"));
+            LOG.error("Agent turn threw synchronously", t);
+            if (terminated.compareAndSet(false, true)) {
+                emit.accept(new AgentChunk(sessionId, "\nError: " + t.getMessage()));
+                emit.accept(new TurnFinished(turnId, "failed", 0));
+            }
         }
+    }
+
+    /** Pick the answer to hand the agent: user's text, else first choice, else 'proceed'. */
+    private static String resolveAnswer(Optional<String> answer, Question question) {
+        if (answer.isPresent() && !answer.get().isBlank()) return answer.get();
+        if (question.choices != null && !question.choices.isEmpty()) return question.choices.get(0);
+        return "proceed";
     }
 }

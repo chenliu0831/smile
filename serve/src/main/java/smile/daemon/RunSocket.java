@@ -18,19 +18,26 @@ package smile.daemon;
 
 import jakarta.inject.Inject;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.quarkus.websockets.next.OnClose;
 import io.quarkus.websockets.next.OnOpen;
 import io.quarkus.websockets.next.OnTextMessage;
 import io.quarkus.websockets.next.WebSocketConnection;
 import io.quarkus.websockets.next.WebSocket;
 
 /**
- * The AutoML Run WebSocket (ADR-0002): the high-throughput stream the Webview
- * connects to directly over loopback. On open it starts a run and forwards each
- * {@link DaemonMessage} as a JSON text frame (shapes identical to
- * {@code studio/app/src/daemon/protocol.ts}). Inbound frames are
- * {@code WebviewReply}s — gate answers/approvals and cancellation.
+ * The interactive agent WebSocket (ADR-0002, ADR-0006). On open it starts a long-lived
+ * {@link ChatSession}-style {@link RunSource} (the agent is built once and idles until
+ * the first user message). The webview drives the conversation with inbound
+ * {@code WebviewReply} frames:
+ * <ul>
+ *   <li>{@code user-message} → a free-text turn (starts or continues the chat)</li>
+ *   <li>{@code answer} → resolves a clarify gate with the user's free text</li>
+ *   <li>{@code approve}/{@code reject} → resolves an approval gate</li>
+ *   <li>{@code cancel-run} → interrupts the in-flight turn</li>
+ * </ul>
  *
- * <p>Endpoint: {@code ws://127.0.0.1:<port>/ws/run}.
+ * <p>Endpoint: {@code ws://127.0.0.1:<port>/ws/run}. When a session token is configured
+ * ({@code smile.daemon.token}), the connection's {@code token} query param must match.
  *
  * @author Haifeng Li
  */
@@ -42,29 +49,35 @@ public class RunSocket {
     @Inject
     RunService runService;
 
-    /** Per-connection control channel; gate replies resolve against it. */
+    /** Per-connection control channel; user messages and gate replies route here. */
     private volatile RunControl control;
+    /** Serializes outbound frames — emit() is called from the worker AND LLM threads. */
+    private final Object sendLock = new Object();
 
     @OnOpen
     public void onOpen(WebSocketConnection connection) {
+        if (!runService.authorize(null, queryToken(connection))) {
+            LOG.warn("Rejected WebSocket connection: invalid session token");
+            connection.closeAndAwait();
+            return;
+        }
         this.control = new RunControl();
+        // Start the session worker; it emits session-started then idles for the first
+        // user message (it does NOT auto-run a pre-configured prompt anymore).
         runService.start(msg -> sendJson(connection, msg), control);
     }
 
     @OnTextMessage
     public void onMessage(String text) {
-        // Inbound WebviewReply: { type: "approve"|"answer"|"reject"|"cancel-run", ... }
         try {
             var node = MAPPER.readTree(text);
             String type = node.path("type").asText("");
+            if (control == null) return;
             switch (type) {
-                case "approve", "answer", "reject" -> {
-                    String gateId = node.path("gateId").asText(null);
-                    if (gateId != null && control != null) control.resolveGate(gateId);
-                }
-                case "cancel-run" -> {
-                    if (control != null) control.cancel();
-                }
+                case "user-message" -> control.submitUserMessage(node.path("text").asText(""));
+                case "answer" -> control.resolveGate(node.path("gateId").asText(null), node.path("answer").asText(""));
+                case "approve", "reject" -> control.resolveGate(node.path("gateId").asText(null), "");
+                case "cancel-run" -> control.cancel();
                 default -> LOG.debugf("Ignoring webview reply of type '%s'", type);
             }
         } catch (Exception e) {
@@ -72,9 +85,35 @@ public class RunSocket {
         }
     }
 
+    @OnClose
+    public void onClose() {
+        if (control != null) control.close();
+    }
+
+    private static String queryToken(WebSocketConnection connection) {
+        // Extract ?token=... from the handshake query (ADR-0002 session token).
+        try {
+            String q = connection.handshakeRequest().query();
+            if (q == null) return null;
+            for (String pair : q.split("&")) {
+                int i = pair.indexOf('=');
+                if (i > 0 && pair.substring(0, i).equals("token")) {
+                    return java.net.URLDecoder.decode(pair.substring(i + 1), java.nio.charset.StandardCharsets.UTF_8);
+                }
+            }
+        } catch (Exception e) {
+            LOG.debugf("No handshake query available: %s", e.getMessage());
+        }
+        return null;
+    }
+
     private void sendJson(WebSocketConnection connection, DaemonMessage msg) {
         try {
-            connection.sendTextAndAwait(MAPPER.writeValueAsString(msg));
+            String json = MAPPER.writeValueAsString(msg);
+            // sendTextAndAwait from multiple threads on one connection must be serialized.
+            synchronized (sendLock) {
+                connection.sendTextAndAwait(json);
+            }
         } catch (Exception e) {
             LOG.warnf("Failed to send daemon message: %s", e.getMessage());
         }

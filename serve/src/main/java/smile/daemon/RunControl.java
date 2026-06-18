@@ -16,30 +16,70 @@
  */
 package smile.daemon;
 
-import java.util.Set;
+import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * Control signals flowing from the webview back to a running {@link RunSource}:
- * gate resolutions (approve/answer) and cancellation. The {@link RunSource} calls
- * {@link #awaitGate} after opening a gate to block until the human responds —
- * mirroring the cooperative human-in-the-loop the {@code automl} skill already
- * implements via its "ask once" {@code onQuestion} callback (ADR-0010).
+ * The control channel between the webview and a {@link ChatSession} / {@link RunSource}.
+ * Carries three kinds of signal:
+ * <ul>
+ *   <li><b>User messages</b> — free-text turns the user sends; the session's turn loop
+ *       blocks on {@link #takeUserMessage} between turns.</li>
+ *   <li><b>Gate answers</b> — resolutions of a clarify/approval gate, optionally carrying
+ *       the user's free-text answer; the agent thread blocks on {@link #awaitGate}.</li>
+ *   <li><b>Cancellation</b> — interrupts the in-flight turn.</li>
+ * </ul>
  *
  * @author Haifeng Li
  */
 public final class RunControl {
     private final ReentrantLock lock = new ReentrantLock();
     private final Condition signal = lock.newCondition();
-    private final Set<String> resolvedGates = ConcurrentHashMap.newKeySet();
+    /** gateId -> the user's answer (empty string = bare approve). */
+    private final Map<String, String> gateAnswers = new ConcurrentHashMap<>();
+    /** Inbound user messages awaiting the turn loop. */
+    private final LinkedBlockingQueue<String> userMessages = new LinkedBlockingQueue<>();
     private volatile boolean cancelled = false;
+    private volatile boolean closed = false;
 
-    /** Marks a gate resolved and wakes any thread waiting on it. */
-    public void resolveGate(String gateId) {
-        resolvedGates.add(gateId);
+    // ---- User messages (turn loop) ----
+
+    /** Enqueue a free-text user turn from the webview. */
+    public void submitUserMessage(String text) {
+        if (text != null) userMessages.offer(text);
+    }
+
+    /**
+     * Block until the next user message arrives, the session is cancelled, or closed.
+     * @return the message, or empty if the session ended while waiting.
+     */
+    public Optional<String> takeUserMessage() {
+        while (!closed) {
+            try {
+                String msg = userMessages.poll(200, TimeUnit.MILLISECONDS);
+                if (msg != null) return Optional.of(msg);
+                if (cancelled) {
+                    // Drain a pending cancel between turns; keep waiting for the next message.
+                    cancelled = false;
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Optional.empty();
+            }
+        }
+        return Optional.empty();
+    }
+
+    // ---- Gate resolution ----
+
+    /** Resolve a gate with an optional free-text answer; wakes the waiting agent thread. */
+    public void resolveGate(String gateId, String answer) {
+        gateAnswers.put(gateId, answer == null ? "" : answer);
         lock.lock();
         try {
             signal.signalAll();
@@ -48,39 +88,56 @@ public final class RunControl {
         }
     }
 
-    /** Requests cancellation of the run and wakes any waiting thread. */
+    /**
+     * Block until the given gate is resolved or the turn is cancelled.
+     * @return the user's answer if resolved, or empty if cancelled.
+     */
+    public Optional<String> awaitGate(String gateId) {
+        lock.lock();
+        try {
+            while (!gateAnswers.containsKey(gateId) && !cancelled && !closed) {
+                signal.await(200, TimeUnit.MILLISECONDS);
+            }
+            return Optional.ofNullable(gateAnswers.get(gateId));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return Optional.empty();
+        } finally {
+            lock.unlock();
+        }
+    }
+
+    // ---- Cancellation / lifecycle ----
+
+    /** Request cancellation of the in-flight turn. */
     public void cancel() {
         cancelled = true;
-        lock.lock();
-        try {
-            signal.signalAll();
-        } finally {
-            lock.unlock();
-        }
+        wake();
     }
 
-    /** Whether cancellation has been requested. */
     public boolean isCancelled() {
         return cancelled;
     }
 
-    /**
-     * Blocks until the given gate is resolved or the run is cancelled.
-     *
-     * @param gateId the open gate to wait on.
-     * @return {@code true} if the gate was resolved, {@code false} if cancelled.
-     */
-    public boolean awaitGate(String gateId) {
+    /** Clear the cancel flag after a turn handles it. */
+    public void clearCancel() {
+        cancelled = false;
+    }
+
+    /** Permanently end the session (connection closed); unblocks all waiters. */
+    public void close() {
+        closed = true;
+        wake();
+    }
+
+    public boolean isClosed() {
+        return closed;
+    }
+
+    private void wake() {
         lock.lock();
         try {
-            while (!resolvedGates.contains(gateId) && !cancelled) {
-                // Wake periodically as a guard against missed signals.
-                signal.await(200, TimeUnit.MILLISECONDS);
-            }
-            return resolvedGates.contains(gateId);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
+            signal.signalAll();
         } finally {
             lock.unlock();
         }

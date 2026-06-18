@@ -59,18 +59,34 @@ public class RunService {
     @ConfigProperty(name = "smile.daemon.llm.baseUrl", defaultValue = "")
     String baseUrl;
 
-    /** Default analysis prompt for the agent engine when the webview sends none. */
-    @ConfigProperty(name = "smile.daemon.prompt",
-            defaultValue = "Run AutoML on the dataset in the current working directory and report the best model.")
-    String prompt;
+    /** Per-session WS token (ADR-0002). Empty disables auth (dev). */
+    @ConfigProperty(name = "smile.daemon.token", defaultValue = "")
+    String token;
+
+    /** Greeting the agent session opens with. */
+    @ConfigProperty(name = "smile.daemon.greeting",
+            defaultValue = "Hi, I'm Clair — your data-science analyst. Load a dataset or ask me to analyze one, and I'll take it from there.")
+    String greeting;
 
     /**
-     * Starts a run on a worker thread, delivering messages to {@code emit} and reading
-     * gate/cancel signals from {@code control}.
+     * Verifies the connection's token against the configured session token (ADR-0002).
+     * When no token is configured (dev), all connections are allowed.
+     *
+     * @param pathToken  token from a path param (unused; reserved).
+     * @param queryToken token from the {@code ?token=} query parameter.
+     */
+    public boolean authorize(String pathToken, String queryToken) {
+        if (token == null || token.isBlank()) return true;
+        return token.equals(queryToken) || token.equals(pathToken);
+    }
+
+    /**
+     * Starts the session worker, delivering messages to {@code emit} and reading
+     * user-message/gate/cancel signals from {@code control}.
      */
     public void start(Consumer<DaemonMessage> emit, RunControl control) {
         RunSource source = newRunSource();
-        Thread worker = new Thread(() -> source.run(emit, control), "automl-run");
+        Thread worker = new Thread(() -> source.run(emit, control), "agent-session");
         worker.setDaemon(true);
         worker.start();
     }
@@ -78,9 +94,9 @@ public class RunService {
     /** Creates the active {@link RunSource} per the {@code smile.daemon.engine} setting. */
     protected RunSource newRunSource() {
         if ("agent".equalsIgnoreCase(engine)) {
-            String runId = "run-" + Long.toHexString(System.nanoTime());
+            String sessionId = "session-" + Long.toHexString(System.nanoTime());
             Path cwd = Path.of(System.getProperty("user.dir"));
-            return new AgentRunSource(runId, prompt, cwd, this::newLlm);
+            return new AgentRunSource(sessionId, cwd, this::newLlm, greeting);
         }
         return new ScriptedRunSource(STEP_MILLIS);
     }

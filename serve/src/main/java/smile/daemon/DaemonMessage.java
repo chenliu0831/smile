@@ -70,6 +70,18 @@ public sealed interface DaemonMessage {
 
     // ---- Concrete messages (one per union member in protocol.ts) ----
 
+    record SessionStarted(String sessionId, String greeting) implements DaemonMessage {
+        public String type() { return "session-started"; }
+    }
+
+    record TurnStarted(String turnId, String role) implements DaemonMessage {
+        public String type() { return "turn-started"; }
+    }
+
+    record TurnFinished(String turnId, String status, long outputTokens) implements DaemonMessage {
+        public String type() { return "turn-finished"; }
+    }
+
     record RunStarted(String runId, String goal, List<Stage> stages) implements DaemonMessage {
         public String type() { return "run-started"; }
     }

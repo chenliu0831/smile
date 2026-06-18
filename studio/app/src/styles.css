@@ -267,3 +267,37 @@ button {
 }
 .modal-actions button.primary { background: var(--accent); color: #06121b; border: none; font-weight: 600; }
 .modal-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---- Interactive chat transcript (P1) ---- */
+.stream { display: flex; flex-direction: column; }
+.stream-empty { color: var(--text-dim); font-size: 13px; padding: 16px; text-align: center; }
+.turn { padding: 10px 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 40%, transparent); }
+.turn-role { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim); margin-bottom: 4px; }
+.turn.user { background: color-mix(in srgb, var(--accent-soft) 35%, transparent); }
+.turn.user .turn-role { color: var(--accent); }
+.turn-text { font-size: 13px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+.turn-thinking { font-size: 12px; color: var(--text-dim); font-style: italic; }
+
+.chat-input {
+  display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border);
+  background: var(--bg-elev); align-items: flex-end;
+}
+.chat-input textarea {
+  flex: 1; resize: none; font-family: inherit; font-size: 13px; line-height: 1.4;
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px;
+}
+.chat-input textarea:focus { outline: none; border-color: var(--accent); }
+.chat-send, .chat-stop {
+  padding: 8px 14px; border-radius: 8px; border: none; font-size: 13px; font-weight: 600;
+  background: var(--accent); color: #06121b; height: 36px;
+}
+.chat-stop { background: var(--bad); color: #fff; width: 36px; }
+.chat-send:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.gate .gate-input-row { display: flex; gap: 8px; }
+.gate .gate-input-row input {
+  flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 8px 10px; font-size: 13px; font-family: inherit;
+}
+.gate .gate-input-row input:focus { outline: none; border-color: var(--accent); }

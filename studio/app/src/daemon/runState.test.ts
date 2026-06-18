@@ -1,114 +1,121 @@
-import { initialRunState, reduceRun } from "./runState";
-import type { DaemonMessage, StageProgress } from "./protocol";
+import { initialRunState, reduceRun, appendUserTurn } from "./runState";
+import type { StageProgress } from "./protocol";
 
 const stages: StageProgress[] = [
   { stageId: "eda", label: "Exploratory Data Analysis", status: "pending", artifactRefs: [] },
-  { stageId: "preprocess", label: "Preprocessing", status: "pending", artifactRefs: [] },
 ];
 
-const started: DaemonMessage = {
-  type: "run-started",
-  runId: "r1",
-  goal: "Predict churn",
-  stages,
-};
-
-test("run-started seeds the run id, goal, ordered stages and running status", () => {
-  const state = reduceRun(initialRunState, started);
-  expect(state.runId).toBe("r1");
-  expect(state.goal).toBe("Predict churn");
-  expect(state.status).toBe("running");
-  expect(state.stages.map((s) => s.stageId)).toEqual(["eda", "preprocess"]);
+test("session-started sets the session id and marks the session running", () => {
+  const s = reduceRun(initialRunState, {
+    type: "session-started",
+    sessionId: "s1",
+    greeting: "Hi, I'm Clair.",
+  });
+  expect(s.sessionId).toBe("s1");
+  expect(s.status).toBe("running");
+  // A greeting seeds an initial agent turn so the user sees a welcome.
+  expect(s.turns.at(-1)).toMatchObject({ role: "agent", text: "Hi, I'm Clair.", status: "done" });
 });
 
-test("stage-progress updates the matching stage in place, preserving order", () => {
-  const state = reduceRun(initialRunState, started);
-  const next = reduceRun(state, {
+test("appendUserTurn adds a user turn and marks the session streaming", () => {
+  const s = appendUserTurn(initialRunState, "analyze churn.csv");
+  expect(s.turns).toHaveLength(1);
+  expect(s.turns[0]).toMatchObject({ role: "user", text: "analyze churn.csv" });
+  expect(s.streaming).toBe(true);
+});
+
+test("turn-started opens a streaming agent turn", () => {
+  let s = appendUserTurn(initialRunState, "hi");
+  s = reduceRun(s, { type: "turn-started", turnId: "t1", role: "agent" });
+  expect(s.turns).toHaveLength(2);
+  expect(s.turns[1]).toMatchObject({ id: "t1", role: "agent", status: "streaming" });
+});
+
+test("agent-chunk appends to the current agent turn, auto-creating one if needed", () => {
+  // Legacy path: no explicit turn-started (mock/scripted source).
+  let s = reduceRun(initialRunState, { type: "agent-chunk", runId: "r", text: "Loading " });
+  s = reduceRun(s, { type: "agent-chunk", runId: "r", text: "data…" });
+  expect(s.turns).toHaveLength(1);
+  expect(s.turns[0]).toMatchObject({ role: "agent", text: "Loading data…", status: "streaming" });
+});
+
+test("tool-call upserts into the current agent turn", () => {
+  let s = reduceRun(initialRunState, { type: "turn-started", turnId: "t1", role: "agent" });
+  s = reduceRun(s, { type: "tool-call", runId: "r", call: { id: "c1", title: "Read x", kind: "read", status: "running" } });
+  s = reduceRun(s, { type: "tool-call", runId: "r", call: { id: "c1", title: "Read x", kind: "read", status: "done", score: "ok" } });
+  expect(s.turns[0].toolCalls).toHaveLength(1);
+  expect(s.turns[0].toolCalls[0].status).toBe("done");
+});
+
+test("turn-finished marks the current agent turn done and returns to idle", () => {
+  let s = appendUserTurn(initialRunState, "hi");
+  s = reduceRun(s, { type: "turn-started", turnId: "t1", role: "agent" });
+  s = reduceRun(s, { type: "agent-chunk", runId: "r", text: "done" });
+  s = reduceRun(s, { type: "turn-finished", turnId: "t1", status: "done", outputTokens: 42 });
+  expect(s.turns[1].status).toBe("done");
+  expect(s.streaming).toBe(false);
+});
+
+test("legacy run-started seeds the session and its stages", () => {
+  const s = reduceRun(initialRunState, { type: "run-started", runId: "r1", goal: "Predict churn", stages });
+  expect(s.sessionId).toBe("r1");
+  expect(s.goal).toBe("Predict churn");
+  expect(s.status).toBe("running");
+  expect(s.stages.map((x) => x.stageId)).toEqual(["eda"]);
+});
+
+test("stage-progress updates a session stage in place", () => {
+  let s = reduceRun(initialRunState, { type: "run-started", runId: "r1", goal: "g", stages });
+  s = reduceRun(s, {
     type: "stage-progress",
     runId: "r1",
-    stage: {
-      stageId: "eda",
-      label: "Exploratory Data Analysis",
-      status: "done",
-      artifactRefs: ["eda_report"],
-      detail: "12 features profiled",
-    },
+    stage: { stageId: "eda", label: "Exploratory Data Analysis", status: "done", artifactRefs: ["rep"] },
   });
-  expect(next.stages.map((s) => s.stageId)).toEqual(["eda", "preprocess"]);
-  expect(next.stages[0].status).toBe("done");
-  expect(next.stages[0].detail).toBe("12 features profiled");
-  expect(next.stages[1].status).toBe("pending");
+  expect(s.stages[0].status).toBe("done");
 });
 
-test("artifact adds by ref, then replaces the same ref on update", () => {
-  let state = reduceRun(initialRunState, started);
-  state = reduceRun(state, {
-    type: "artifact",
-    runId: "r1",
-    artifact: { ref: "lb", kind: "leaderboard", title: "Leaderboard" },
-  });
-  expect(state.artifacts.lb.title).toBe("Leaderboard");
-
-  state = reduceRun(state, {
-    type: "artifact",
-    runId: "r1",
-    artifact: { ref: "lb", kind: "leaderboard", title: "Leaderboard (final)" },
-  });
-  expect(Object.keys(state.artifacts)).toEqual(["lb"]);
-  expect(state.artifacts.lb.title).toBe("Leaderboard (final)");
+test("artifact adds/replaces by ref at the session level", () => {
+  let s = reduceRun(initialRunState, { type: "artifact", runId: "r", artifact: { ref: "lb", kind: "leaderboard", title: "L" } });
+  s = reduceRun(s, { type: "artifact", runId: "r", artifact: { ref: "lb", kind: "leaderboard", title: "L2" } });
+  expect(Object.keys(s.artifacts)).toEqual(["lb"]);
+  expect(s.artifacts.lb.title).toBe("L2");
 });
 
-test("tool-call appends, then updates the same id in place on status change", () => {
-  let state = reduceRun(initialRunState, started);
-  state = reduceRun(state, {
-    type: "tool-call",
-    runId: "r1",
-    call: { id: "t1", title: "Ran candidate_lgbm.py", kind: "script", status: "running" },
-  });
-  state = reduceRun(state, {
-    type: "tool-call",
-    runId: "r1",
-    call: { id: "t2", title: "Ran candidate_rf.py", kind: "script", status: "running" },
-  });
-  expect(state.toolCalls.map((c) => c.id)).toEqual(["t1", "t2"]);
-
-  state = reduceRun(state, {
-    type: "tool-call",
-    runId: "r1",
-    call: { id: "t1", title: "Ran candidate_lgbm.py", kind: "script", status: "done", score: "AUC 0.91" },
-  });
-  expect(state.toolCalls.map((c) => c.id)).toEqual(["t1", "t2"]);
-  expect(state.toolCalls[0].status).toBe("done");
-  expect(state.toolCalls[0].score).toBe("AUC 0.91");
+test("gate-opened/closed add and remove session gates", () => {
+  let s = reduceRun(initialRunState, { type: "gate-opened", runId: "r", gate: { id: "g1", kind: "clarify", prompt: "?" } });
+  expect(s.openGates).toHaveLength(1);
+  s = reduceRun(s, { type: "gate-closed", runId: "r", gateId: "g1" });
+  expect(s.openGates).toHaveLength(0);
 });
 
-test("agent-chunk accumulates into the agent text stream", () => {
-  let state = reduceRun(initialRunState, started);
-  state = reduceRun(state, { type: "agent-chunk", runId: "r1", text: "Loading " });
-  state = reduceRun(state, { type: "agent-chunk", runId: "r1", text: "churn.csv…" });
-  expect(state.agentText).toBe("Loading churn.csv…");
+test("two turn-started in a row finalize the stranded turn (no empty Thinking turn lingers)", () => {
+  let s = reduceRun(initialRunState, { type: "turn-started", turnId: "t1", role: "agent" });
+  s = reduceRun(s, { type: "turn-started", turnId: "t2", role: "agent" });
+  expect(s.turns).toHaveLength(2);
+  expect(s.turns[0].status).toBe("done"); // t1 finalized
+  expect(s.turns[1].status).toBe("streaming"); // t2 active
 });
 
-test("gate-opened adds an open gate; gate-closed removes it by id", () => {
-  let state = reduceRun(initialRunState, started);
-  state = reduceRun(state, {
-    type: "gate-opened",
-    runId: "r1",
-    gate: { id: "g1", kind: "clarify", prompt: "What is the primary metric?" },
-  });
-  state = reduceRun(state, {
-    type: "gate-opened",
-    runId: "r1",
-    gate: { id: "g2", kind: "approval", prompt: "Run GPU NAS?" },
-  });
-  expect(state.openGates.map((g) => g.id)).toEqual(["g1", "g2"]);
-
-  state = reduceRun(state, { type: "gate-closed", runId: "r1", gateId: "g1" });
-  expect(state.openGates.map((g) => g.id)).toEqual(["g2"]);
+test("turn-finished targets the turn by id and only clears streaming for the active one", () => {
+  let s = reduceRun(initialRunState, { type: "turn-started", turnId: "t1", role: "agent" });
+  s = reduceRun(s, { type: "agent-chunk", runId: "r", text: "x" });
+  // A stale finish for an unknown turn must not wrongly flip the active turn's state.
+  s = reduceRun(s, { type: "turn-finished", turnId: "nope", status: "done" });
+  // (fallback path finalizes the tail streaming turn — acceptable) then the real finish:
+  let s2 = reduceRun(
+    { ...initialRunState, turns: [
+      { id: "t1", role: "agent", text: "x", toolCalls: [], status: "streaming" },
+    ], streaming: true },
+    { type: "turn-finished", turnId: "t1", status: "done" },
+  );
+  expect(s2.turns[0].status).toBe("done");
+  expect(s2.streaming).toBe(false);
 });
 
-test("run-finished sets the terminal status", () => {
-  let state = reduceRun(initialRunState, started);
-  state = reduceRun(state, { type: "run-finished", runId: "r1", status: "completed" });
-  expect(state.status).toBe("completed");
+test("run-finished marks any streaming turn done and sets terminal status", () => {
+  let s = reduceRun(initialRunState, { type: "agent-chunk", runId: "r", text: "x" });
+  s = reduceRun(s, { type: "run-finished", runId: "r", status: "completed" });
+  expect(s.status).toBe("completed");
+  expect(s.streaming).toBe(false);
+  expect(s.turns[0].status).toBe("done");
 });

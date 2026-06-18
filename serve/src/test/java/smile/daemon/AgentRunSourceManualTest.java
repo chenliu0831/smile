@@ -45,27 +45,29 @@ public class AgentRunSourceManualTest {
         String model = System.getProperty("smile.daemon.llm.model", "claude-opus-4-8");
         String baseUrl = System.getProperty("smile.daemon.llm.baseUrl", "");
         var source = new AgentRunSource(
-                "manual-run",
-                "Examine input/churn.csv, report its shape and the churn rate in two sentences.",
+                "manual-session",
                 cwd,
                 () -> "bedrock".equalsIgnoreCase(provider)
                         ? new ChatCompletions(baseUrl, System.getenv("AWS_BEARER_TOKEN_BEDROCK"), model)
-                        : LLM.of(provider, model));
+                        : LLM.of(provider, model),
+                "greeting");
         var control = new RunControl();
         var msgs = new CopyOnWriteArrayList<DaemonMessage>();
 
         long t0 = System.currentTimeMillis();
         Thread worker = new Thread(() -> source.run(msgs::add, control));
         worker.start();
+        // Drive one interactive turn.
+        control.submitUserMessage("Examine input/churn.csv, report its shape and the churn rate in two sentences.");
 
-        // Auto-approve any gate so the run can proceed unattended.
+        // Auto-answer any gate so the turn can proceed unattended; finish on TurnFinished.
         long deadline = System.currentTimeMillis() + 240_000;
         String finished = null;
         int lastSeen = 0;
         while (System.currentTimeMillis() < deadline && worker.isAlive()) {
             for (var m : msgs) {
-                if (m instanceof DaemonMessage.GateOpened g) control.resolveGate(g.gate().id());
-                if (m instanceof DaemonMessage.RunFinished f) finished = f.status();
+                if (m instanceof DaemonMessage.GateOpened g) control.resolveGate(g.gate().id(), "AUC");
+                if (m instanceof DaemonMessage.TurnFinished f) finished = f.status();
             }
             // Heartbeat: print each new message type as it arrives so we can see liveness.
             for (int i = lastSeen; i < msgs.size(); i++) {
@@ -79,6 +81,7 @@ public class AgentRunSourceManualTest {
             if (finished != null) break;
             Thread.sleep(250);
         }
+        control.close(); // end the session loop so the worker thread exits
 
         System.out.println("=== AGENT RUN: " + msgs.size() + " messages, finished=" + finished
                 + ", elapsed=" + (System.currentTimeMillis() - t0) + "ms ===");

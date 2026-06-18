@@ -77,7 +77,7 @@ public class ScriptedRunSource implements RunSource {
         Question q = new Question("q-metric", "What is the primary metric to optimize?",
                 List.of("AUC (recommended)", "F1", "Accuracy"));
         emit.accept(new GateOpened(RUN_ID, new Gate("g-metric", "clarify", "Confirm the primary metric", q)));
-        boolean answered = control.awaitGate("g-metric");
+        boolean answered = control.awaitGate("g-metric").isPresent();
         emit.accept(new GateClosed(RUN_ID, "g-metric"));
         if (!answered || control.isCancelled()) {
             emit.accept(new RunFinished(RUN_ID, "cancelled"));

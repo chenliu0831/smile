@@ -18,7 +18,7 @@ import { AgentStream } from "./AgentStream";
 
 /** The three-zone Run body (timeline / canvas / agent stream), no chrome. */
 export function RunZones() {
-  const { state, resolveGate } = useRunContext();
+  const { state, sendMessage, resolveGate, approveGate, cancel } = useRunContext();
   const [selectedStage, setSelectedStage] = useState<string | null>(null);
 
   // When a stage is selected, the canvas focuses its artifacts; otherwise show all.
@@ -36,10 +36,13 @@ export function RunZones() {
       />
       <Canvas artifacts={visibleArtifacts} />
       <AgentStream
-        agentText={state.agentText}
-        toolCalls={state.toolCalls}
+        turns={state.turns}
         openGates={state.openGates}
+        streaming={state.streaming}
+        onSend={sendMessage}
         onResolveGate={resolveGate}
+        onApproveGate={approveGate}
+        onCancel={cancel}
       />
     </div>
   );

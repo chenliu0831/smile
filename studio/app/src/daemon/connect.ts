@@ -47,10 +47,17 @@ export async function connectRun(stepMs = 350, workingDir = "."): Promise<RunCon
 
   const info = await startDaemon(workingDir);
   if (info?.attached && info.port > 0) {
-    return new WebSocketRunConnection(`ws://127.0.0.1:${info.port}/ws/run`);
+    return new WebSocketRunConnection(
+      `ws://127.0.0.1:${info.port}/ws/run`,
+      info.token || undefined,
+    );
   }
 
   // Fallback: in-process mock daemon. start() is deferred to the caller (after
-  // subscribe) so the synchronous run-started message is never missed.
-  return new MockRunPlayer(churnRunScript, { stepMs });
+  // subscribe) so the synchronous greeting is never missed.
+  return new MockRunPlayer(churnRunScript, {
+    stepMs,
+    greeting:
+      "Hi, I'm Clair — your data-science analyst. Load a dataset or ask me to analyze one, and I'll take it from there.",
+  });
 }
