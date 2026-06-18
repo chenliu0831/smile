@@ -45,7 +45,26 @@ cp /path/to/smile-<ver>/lib/ioa-aid-1.0.0.jar    serve/lib/
   - Gemini: `GOOGLE_API_KEY`.
   - (Bedrock-routed Anthropic would require the anthropic SDK's Bedrock config — `CLAUDE_CODE_USE_BEDROCK` alone is NOT consumed by ioa-agent's Anthropic client.)
 
-## Running the production jar (recommended over quarkusDev for agent mode)
+## Turnkey: the Tauri Shell spawns the daemon from Settings
+
+In the desktop app the user does **not** run any of the commands below. They open
+**Settings** (gear in the topbar), pick the provider (e.g. Amazon Bedrock), enter the
+base URL / model / key, and save. On the next run the Rust Shell:
+
+1. reads the saved config (store) + token (OS keychain),
+2. picks a free loopback port,
+3. spawns `java … -jar quarkus-run.jar` with the right `-Dsmile.daemon.*` flags and the
+   token injected as the provider's env var (`AWS_BEARER_TOKEN_BEDROCK` for bedrock,
+   `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`/`GOOGLE_API_KEY` otherwise),
+4. waits until it is listening, and reports the port via `daemon_info`;
+   the Webview connects to `ws://127.0.0.1:<port>/ws/run`.
+
+Saving Settings stops any running daemon so the next run uses the new config. The
+daemon is killed when the window closes. Deployment paths are env-overridable:
+`SMILE_DAEMON_JAR` (default `serve/build/quarkus-app/quarkus-run.jar`) and `SMILE_HOME`.
+The arg/env builder is unit-tested in `src-tauri/src/lib.rs`.
+
+## Running the production jar manually (dev / headless)
 
 `quarkusDev` uses an isolated dev classloader that does NOT expose the `base`/`plot`
 module classes to the vendored `ioa-agent` jar, so agent mode fails there with

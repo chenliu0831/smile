@@ -33,6 +33,15 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setSaving(true);
     try {
       await setLlmConfig({ provider, baseUrl, model }, apiKey);
+      // Stop any running daemon so the next run is spawned with the new config.
+      if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("stop_daemon");
+        } catch {
+          /* no daemon running */
+        }
+      }
       onClose();
     } finally {
       setSaving(false);
