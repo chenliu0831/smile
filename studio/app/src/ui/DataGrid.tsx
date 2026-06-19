@@ -75,16 +75,26 @@ export function DataGrid({ data, height = 360, settings = false, plugin = "Datag
     let viewerEl: HTMLPerspectiveViewerElement | null = null;
 
     (async () => {
+      let table: Awaited<ReturnType<Awaited<ReturnType<PerspectiveModule["worker"]>>["table"]>> | null = null;
       try {
         const perspective = await loadPerspective();
         if (disposed || !ref.current) return;
 
         const ipc = toArrowIPC(data);
         const worker = await perspective.worker();
-        const table = await worker.table(ipc.buffer as ArrayBuffer);
+        table = await worker.table(ipc.buffer as ArrayBuffer);
+        // The <perspective-viewer> element persists across data-prop changes, so a
+        // superseded effect (data changed mid-flight) must NOT load into the shared
+        // viewer — otherwise a slower prior query can clobber a newer one. Re-check the
+        // disposed flag after every await and free the orphaned table.
+        if (disposed) { await table.delete?.(); return; }
 
         viewerEl = ref.current;
         await viewerEl.load(Promise.resolve(table));
+        // load() transferred the table into the shared viewer. If this effect was
+        // superseded mid-load, free what we just loaded — otherwise a slower prior query
+        // leaves its (now stale) table displayed in the viewer the newer effect also uses.
+        if (disposed) { await viewerEl.delete?.().catch(() => {}); return; }
         await viewerEl.restore({
           plugin,
           theme: "Pro Dark",
@@ -93,6 +103,7 @@ export function DataGrid({ data, height = 360, settings = false, plugin = "Datag
         });
       } catch (e) {
         if (!disposed) setError(e instanceof Error ? e.message : String(e));
+        await table?.delete?.().catch(() => {});
       }
     })();
 

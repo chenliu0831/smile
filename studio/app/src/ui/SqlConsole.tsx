@@ -20,6 +20,9 @@ import {
 } from "../daemon/sql";
 import { DataGrid } from "./DataGrid";
 
+/** Statements that return a result set we can render in the grid. */
+const QUERY_SHAPE = /^\s*(select|with|from|table|values|pivot|unpivot|describe|show|summarize)\b/i;
+
 export function SqlConsole({ injected }: { injected?: { sql: string; n: number } | null }) {
   const { httpBase, datasetInfo, state } = useRunContext();
   const [sql, setSql] = useState("");
@@ -29,26 +32,89 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // The SELECT-shape statement whose result is currently in the grid (NOT the live editor
+  // text, which the user may have edited). This is what we re-run to keep the grid current
+  // when the underlying table is mutated by the user's own DML or by the agent.
+  const lastQueryRef = useRef<string | null>(null);
+  const runningRef = useRef(false);
+  // Set when an agent-activity refresh is wanted but a user run is in flight; the run's
+  // finally drains it so a refresh requested mid-run is never lost.
+  const pendingRefreshRef = useRef(false);
 
   const refreshTables = useCallback(() => {
     if (httpBase) fetchTables(httpBase).then(setTables).catch(() => setTables([]));
   }, [httpBase]);
+
+  /**
+   * Runs a result-returning statement and reflects it in the grid, tracking it as the
+   * current query so we can auto-refresh it later. `silent` (used by auto-refresh) avoids
+   * the spinner/blanking the grid while the agent works. If the tracked table was dropped
+   * or renamed (catalog error), shows a purpose-built message instead of a raw DuckDB error
+   * and stops tracking it so we don't keep re-running a dead query.
+   */
+  const runSelect = useCallback(async (statement: string, opts?: { silent?: boolean }) => {
+    if (!httpBase) return;
+    const silent = opts?.silent ?? false;
+    if (!silent) {
+      setRunning(true); runningRef.current = true;
+      // Only a user-initiated run clears the prior error/notice. A silent auto-refresh
+      // (agent tick) must NOT wipe the user's "Saved as table" notice or last error.
+      setError(null);
+      setSavedNotice(null);
+    }
+    try {
+      const r = await runSql(httpBase, statement);
+      setResult(r);
+      lastQueryRef.current = QUERY_SHAPE.test(statement) ? statement : lastQueryRef.current;
+    } catch (e) {
+      const msg = e instanceof SqlRunError ? e.message : String(e);
+      // The table backing the tracked query was removed/renamed (likely by Clair).
+      if (/does not exist|not found|catalog/i.test(msg)) {
+        lastQueryRef.current = null;
+        setResult(null);
+        setError("The table you were viewing was dropped or renamed. Run a new query.");
+      } else if (!silent) {
+        setError(msg);
+        setResult(null);
+      }
+      // On a silent (auto) refresh of a non-catalog error, keep the prior result rather
+      // than blanking what the user is looking at.
+    } finally {
+      if (!silent) { setRunning(false); runningRef.current = false; }
+    }
+  }, [httpBase]);
+
+  // Drains a refresh requested by an agent tick while a user run() / save() was in flight,
+  // so a transformation that landed mid-run is still reflected once the run completes.
+  const drainPendingRefresh = useCallback(() => {
+    if (pendingRefreshRef.current && lastQueryRef.current && !runningRef.current) {
+      pendingRefreshRef.current = false;
+      runSelect(lastQueryRef.current, { silent: true });
+    }
+  }, [runSelect]);
 
   // Load the table list on mount / daemon change.
   useEffect(() => {
     refreshTables();
   }, [refreshTables]);
 
-  // The agent shares this DuckDB session — when it finishes a turn it may have created or
-  // loaded tables (its init/preprocess skills do). Refresh the rail on each agent turn
-  // boundary (and tool-call count change) so agent-created tables appear without a manual
-  // action. Cheap: /tables is a fast metadata read.
+  // The agent shares this DuckDB session — a finished turn may have created/loaded/mutated
+  // tables (init/preprocess/feature-engineering skills do). On each agent turn boundary:
+  // (1) refresh the schema rail, and (2) auto re-run the tracked query so the result grid
+  // reflects the agent's transformation without a manual action (user chose auto-refresh).
   const agentActivity = `${state.turns.length}:${state.streaming}:${
     state.turns.reduce((acc, t) => acc + t.toolCalls.length, 0)
   }`;
   useEffect(() => {
     refreshTables();
-  }, [agentActivity, refreshTables]);
+    if (lastQueryRef.current) {
+      // If a user run is in flight, defer (the run's finally drains it) so the refresh is
+      // never dropped — the turn-finished tick may land mid-run with no later tick to retry.
+      if (!runningRef.current) runSelect(lastQueryRef.current, { silent: true });
+      else pendingRefreshRef.current = true;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentActivity]);
 
   // Seed a starter query when a dataset is present, so a non-SQL user gets an instant
   // zero-typing preview. Conflict-free: read the input file directly via read_csv/parquet/
@@ -81,20 +147,33 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   const run = useCallback(async () => {
     const statement = sql.trim();
     if (!statement || !httpBase || running) return;
-    setRunning(true);
+    // A result-returning statement renders + becomes the tracked query.
+    if (QUERY_SHAPE.test(statement)) {
+      await runSelect(statement);
+      drainPendingRefresh();
+      return;
+    }
+    // A DDL/DML statement: run it, refresh the rail, then re-run the tracked query so the
+    // grid shows the POST-mutation data instead of being blanked to an effect summary. If
+    // nothing is tracked yet, fall back to showing the effect result.
+    setRunning(true); runningRef.current = true;
     setError(null);
     try {
       const r = await runSql(httpBase, statement);
-      setResult(r);
-      // A DDL/DML statement may have changed the table set; refresh the rail.
-      if (r.kind !== "query") refreshTables();
+      refreshTables();
+      if (lastQueryRef.current) {
+        await runSelect(lastQueryRef.current, { silent: true });
+      } else {
+        setResult(r);
+      }
     } catch (e) {
       setError(e instanceof SqlRunError ? e.message : String(e));
       setResult(null);
     } finally {
-      setRunning(false);
+      setRunning(false); runningRef.current = false;
+      drainPendingRefresh();
     }
-  }, [sql, httpBase, running, refreshTables]);
+  }, [sql, httpBase, running, refreshTables, runSelect, drainPendingRefresh]);
 
   const save = useCallback(async () => {
     const select = sql.trim();
@@ -102,7 +181,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
     const raw = window.prompt("Save query result as table named:");
     const name = raw?.trim();
     if (!name) return;
-    setRunning(true);
+    setRunning(true); runningRef.current = true;
     setError(null);
     setSavedNotice(null);
     try {
@@ -112,7 +191,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
         // 409 = name taken. Offer to overwrite rather than silently clobbering.
         if (e instanceof SqlRunError && e.status === 409) {
           if (!window.confirm(`A table named "${name}" already exists. Overwrite it?`)) {
-            setRunning(false);
+            setRunning(false); runningRef.current = false;
             return;
           }
           await saveAsTable(httpBase, name, select, true);
@@ -121,16 +200,16 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
         }
       }
       refreshTables();
-      // Show the saved table so "Save as table" produces visible feedback (#4).
-      const preview = await runSql(httpBase, `SELECT * FROM "${name}"`);
-      setResult(preview);
+      // Show the saved table (becomes the tracked query so it auto-refreshes too).
+      await runSelect(`SELECT * FROM "${name}"`, { silent: true });
       setSavedNotice(`Saved as “${name}”.`);
     } catch (e) {
       setError(e instanceof SqlRunError ? e.message : String(e));
     } finally {
-      setRunning(false);
+      setRunning(false); runningRef.current = false;
+      drainPendingRefresh();
     }
-  }, [sql, httpBase, running, refreshTables]);
+  }, [sql, httpBase, running, refreshTables, runSelect, drainPendingRefresh]);
 
   const insert = useCallback((text: string) => {
     setSql((prev) => (prev.trim() ? `${prev} ${text}` : text));
