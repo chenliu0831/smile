@@ -87,8 +87,18 @@ public class SqlResource {
         return t;
     });
 
+    /** A safe SQL identifier: letters/digits/underscores, not starting with a digit. */
+    private static final Pattern SAFE_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+
     /** Request body: a single SQL statement and an optional result-row cap. */
     public record SqlRequest(String sql, Integer maxRows) {}
+
+    /**
+     * Request body for save-as-table: the new table name, the defining SELECT, and whether
+     * to overwrite an existing table of that name. Overwrite defaults to false so we never
+     * silently clobber a table the agent (or the user) already created in the shared session.
+     */
+    public record SaveRequest(String name, String select, Boolean overwrite) {}
 
     /** JSON response for non-SELECT statements. */
     public record ExecResult(String kind, boolean ok, Integer rowsAffected, List<String> tables) {}
@@ -104,8 +114,11 @@ public class SqlResource {
             return error(Response.Status.BAD_REQUEST, "No SQL statement provided.");
         }
         final int maxRows = clampMaxRows(req.maxRows());
+        return await(POOL.submit(() -> execute(sql, maxRows)));
+    }
 
-        Future<Response> future = POOL.submit(() -> execute(sql, maxRows));
+    /** Awaits a SQL task under the timeout, mapping failures to the right HTTP status. */
+    private Response await(Future<Response> future) {
         try {
             return future.get(TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -137,6 +150,49 @@ public class SqlResource {
         }
     }
 
+    /**
+     * Save-as-table: materializes a SELECT as a real, chainable DuckDB table via
+     * {@code CREATE OR REPLACE TABLE <name> AS <select>}, visible to later SQL and to the
+     * agent (shared session). Records the lineage so the schema rail shows its definition.
+     *
+     * <p>Endpoint: {@code POST /api/v1/sql/save} with {@code {"name": "...", "select": "..."}}.
+     */
+    @POST
+    @Path("/save")
+    @Consumes(MediaType.APPLICATION_JSON)
+    public Response save(SaveRequest req) {
+        final String name = req == null || req.name() == null ? "" : req.name().trim();
+        final String select = req == null || req.select() == null ? "" : req.select().trim();
+        if (name.isEmpty() || select.isEmpty()) {
+            return error(Response.Status.BAD_REQUEST, "Both 'name' and 'select' are required.");
+        }
+        if (!SAFE_IDENTIFIER.matcher(name).matches()) {
+            return error(Response.Status.BAD_REQUEST,
+                    "Invalid table name — use letters, digits, and underscores (not starting with a digit).");
+        }
+        final boolean overwrite = req.overwrite() != null && req.overwrite();
+        // Non-destructive by default: a plain CREATE TABLE so a name that already exists
+        // (e.g. a table the agent loaded) fails with "table already exists" → 409, instead
+        // of OR REPLACE silently dropping it. Overwrite only when the caller opts in.
+        String stripped = stripTrailingSemicolon(select);
+        String verb = overwrite ? "CREATE OR REPLACE TABLE " : "CREATE TABLE ";
+        String ddl = verb + "\"" + name + "\" AS " + stripped;
+
+        Future<Response> future = POOL.submit(() -> {
+            // Guard collisions explicitly so we can return a clear 409 (and not even attempt
+            // the destructive path) when the name is taken and overwrite wasn't requested.
+            if (!overwrite && SharedSql.tables().stream().anyMatch(t -> t.equalsIgnoreCase(name))) {
+                return error(Response.Status.CONFLICT,
+                        "A table named '" + name + "' already exists. Choose another name or overwrite it.");
+            }
+            SharedSql.execute(ddl);
+            SqlLineage.record(name, stripped);
+            return Response.ok(new ExecResult("save", true, null, SharedSql.tables()))
+                    .type(MediaType.APPLICATION_JSON).build();
+        });
+        return await(future);
+    }
+
     /** Runs the statement on the shared engine; called on the pool thread under the timeout. */
     private Response execute(String sql, int maxRows) throws ToolException {
         if (QUERY.matcher(sql).find()) {
@@ -148,6 +204,10 @@ public class SqlResource {
                     .type(MediaType.APPLICATION_JSON).build();
         }
         SharedSql.execute(sql);
+        // Keep lineage in sync: record CREATE TABLE/VIEW ... AS, and forget a dropped name
+        // so the rail never shows a stale definition after a drop/recreate.
+        SqlLineage.recordIfCreateAs(sql);
+        SqlLineage.forgetIfDrop(sql);
         return Response.ok(new ExecResult("ddl", true, null, SharedSql.tables()))
                 .type(MediaType.APPLICATION_JSON).build();
     }

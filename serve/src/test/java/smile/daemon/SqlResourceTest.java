@@ -27,6 +27,8 @@ import org.junit.jupiter.api.TestMethodOrder;
 import smile.data.DataFrame;
 import smile.io.Arrow;
 import static io.restassured.RestAssured.given;
+import static org.hamcrest.CoreMatchers.containsString;
+import static org.hamcrest.CoreMatchers.hasItem;
 import static org.hamcrest.CoreMatchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -166,5 +168,73 @@ public class SqlResourceTest {
     @Order(8)
     public void emptySqlReturns400() {
         post("   ").then().statusCode(400);
+    }
+
+    // ---- Phase 2: schema rail (/tables) + save-as-table (/sql/save) ----
+
+    @Test
+    @Order(9)
+    public void saveAsTableCreatesChainableTableVisibleToAgent() {
+        // Save a SELECT as a real table.
+        given().contentType(ContentType.JSON)
+                .body("{\"name\":\"smile_saved\",\"select\":\"SELECT * FROM range(3) AS r(i)\"}")
+                .when().post("/api/v1/sql/save")
+                .then().statusCode(200).contentType(ContentType.JSON)
+                .body("ok", is(true))
+                .body("tables", hasItem("smile_saved"));
+        // The agent's shared session sees it; it chains (queryable by a later statement).
+        assertTrue(ioa.llm.tool.SharedSql.tables().contains("smile_saved"));
+    }
+
+    @Test
+    @Order(9)
+    public void saveRejectsUnsafeTableName() {
+        given().contentType(ContentType.JSON)
+                .body("{\"name\":\"x; DROP TABLE y\",\"select\":\"SELECT 1\"}")
+                .when().post("/api/v1/sql/save")
+                .then().statusCode(400);
+    }
+
+    @Test
+    @Order(11)
+    public void saveToExistingNameReturns409WithoutOverwrite() {
+        // First save creates a fresh table.
+        given().contentType(ContentType.JSON)
+                .body("{\"name\":\"smile_collide\",\"select\":\"SELECT 1 AS a\"}")
+                .when().post("/api/v1/sql/save")
+                .then().statusCode(200);
+        // A second save of the same name WITHOUT overwrite must NOT clobber it → 409.
+        given().contentType(ContentType.JSON)
+                .body("{\"name\":\"smile_collide\",\"select\":\"SELECT 99 AS z\"}")
+                .when().post("/api/v1/sql/save")
+                .then().statusCode(409);
+        // overwrite:true replaces it.
+        given().contentType(ContentType.JSON)
+                .body("{\"name\":\"smile_collide\",\"select\":\"SELECT 99 AS z\",\"overwrite\":true}")
+                .when().post("/api/v1/sql/save")
+                .then().statusCode(200).body("ok", is(true));
+    }
+
+    @Test
+    @Order(12)
+    public void dropForgetsLineage() {
+        // Create with lineage, drop it, recreate WITHOUT a recorded definition → the rail
+        // must not show the old definition.
+        post("CREATE OR REPLACE TABLE smile_drop_t AS SELECT 1 AS a").then().statusCode(200);
+        post("DROP TABLE smile_drop_t").then().statusCode(200);
+        given().when().get("/api/v1/tables")
+                .then().statusCode(200)
+                .body("findAll { it.name == 'smile_drop_t' }", org.hamcrest.Matchers.hasSize(0));
+    }
+
+    @Test
+    @Order(10)
+    public void tablesEndpointListsColumnsAndLineage() {
+        // smile_saved was created via /sql/save above, so its lineage (defining SQL) is known.
+        given().when().get("/api/v1/tables")
+                .then().statusCode(200).contentType(ContentType.JSON)
+                .body("name", hasItem("smile_saved"))
+                .body("find { it.name == 'smile_saved' }.columns.name", hasItem("i"))
+                .body("find { it.name == 'smile_saved' }.definition", containsString("range(3)"));
     }
 }

@@ -11,7 +11,7 @@
  * (recoverability backbone), and only the centre canvas swaps. Chat-first on launch:
  * the canvas stays hidden until there's something to show, then splits in.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { RunProvider, useRunContext } from "../automl/RunContext";
 import { Topbar } from "./Topbar";
 import { AgentStream } from "./AgentStream";
@@ -19,8 +19,6 @@ import { ChatWelcome } from "./ChatWelcome";
 import { ViewRail, type CanvasView, type ViewDef } from "./ViewRail";
 import { Timeline } from "./Timeline";
 import { Canvas } from "./Canvas";
-import { DataPanel } from "./DataPanel";
-import { DataExplorer } from "./DataExplorer";
 import { SqlConsole } from "./SqlConsole";
 
 function WorkspaceInner() {
@@ -30,45 +28,50 @@ function WorkspaceInner() {
   const hasDataset = !!datasetInfo || !!dataset;
   const hasArtifacts = Object.keys(state.artifacts).length > 0;
   const hasStages = state.stages.length > 0;
+  // The "Data" view IS the SQL console (Phase 2): it needs the daemon's /sql endpoint (the
+  // shared DuckDB session). It works with a daemon even before a file is "loaded" — the
+  // agent may have created tables, and the user can query the input file directly.
+  const hasDaemon = !!c.httpBase;
+  const hasData = hasDataset || hasDaemon;
   // The canvas is worth showing once there's data or a run producing artifacts/stages.
-  // (The SQL view can additionally be opened on demand — see canvasOpen below — without
-  // forcing the canvas open at cold start.)
+  // (The Data/SQL view can additionally be opened on demand — see canvasOpen below.)
   const canvasReady = hasDataset || hasArtifacts || hasStages;
 
-  // SQL requires the real daemon's /sql endpoint (the shared DuckDB session). Gate it
-  // strictly on a daemon connection — with no daemon there's nothing to query, and the
-  // mock has no /sql. The agent may have created tables even before a file is "loaded".
-  const hasDaemon = !!c.httpBase;
   const views: ViewDef[] = useMemo(
     () => [
       { id: "overview", label: "Overview", icon: "◫", enabled: canvasReady },
-      { id: "data", label: "Data", icon: "▤", enabled: hasDataset },
-      { id: "explore", label: "Explore", icon: "▦", enabled: hasDataset },
-      { id: "sql", label: "SQL", icon: "⌗", enabled: hasDaemon },
+      { id: "data", label: "Data", icon: "⌗", enabled: hasData },
       { id: "pipeline", label: "Pipeline", icon: "▸", enabled: hasStages },
       { id: "leaderboard", label: "Leaderboard", icon: "★", enabled: !!state.artifacts["leaderboard"] },
     ],
-    [canvasReady, hasDataset, hasStages, hasDaemon, state.artifacts],
+    [canvasReady, hasData, hasStages, state.artifacts],
   );
 
   const [view, setView] = useState<CanvasView>("overview");
-  // The agent's "Open in console" injects a statement into the SQL editor. A counter keys
-  // the prop so re-opening the SAME statement still triggers the inject effect.
+  // The agent's "Open in console" injects a statement into the SQL editor (the Data view).
+  // A counter keys the prop so re-opening the SAME statement still triggers the inject.
   const [injectedSql, setInjectedSql] = useState<{ sql: string; n: number } | null>(null);
   const openSql = (sql: string) => {
     setUserPicked(true);
-    setView("sql");
+    setView("data");
     setInjectedSql((prev) => ({ sql, n: (prev?.n ?? 0) + 1 }));
   };
   // Auto-reveal the most relevant view as the workflow progresses, without yanking the
-  // user off a view they explicitly chose.
+  // user off a view they explicitly chose. Fires only when the COMPUTED target changes
+  // (new data/stage/leaderboard arrives) — not merely because userPicked flipped — so that
+  // Reset can return to Overview and stay there until real new data appears.
   const [userPicked, setUserPicked] = useState(false);
+  const autoTarget: CanvasView | null = state.artifacts["leaderboard"]
+    ? "leaderboard"
+    : hasStages ? "pipeline" : hasDataset ? "data" : null;
+  const lastAutoTarget = useRef<CanvasView | null>(null);
   useEffect(() => {
-    if (userPicked) return;
-    if (state.artifacts["leaderboard"]) setView("leaderboard");
-    else if (hasStages) setView("pipeline");
-    else if (hasDataset) setView("data");
-  }, [userPicked, hasDataset, hasStages, state.artifacts]);
+    if (autoTarget && autoTarget !== lastAutoTarget.current) {
+      lastAutoTarget.current = autoTarget;
+      if (!userPicked) setView(autoTarget);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoTarget]);
 
   const welcome = (
     <ChatWelcome
@@ -80,9 +83,9 @@ function WorkspaceInner() {
   );
 
   // The canvas opens automatically when there's data/run output, OR on demand when the
-  // user (or an agent SQL card) opens the SQL console — so the cold-start screen stays
+  // user (or an agent SQL card) opens the Data/SQL console — so the cold-start screen stays
   // chat-only until something is actually worth showing.
-  const canvasOpen = canvasReady || view === "sql";
+  const canvasOpen = canvasReady || view === "data";
 
   return (
     <div className="app">
@@ -128,10 +131,7 @@ function CanvasRegion({ view, injectedSql }: { view: CanvasView; injectedSql?: {
 
   switch (view) {
     case "data":
-      return <DataPanel />;
-    case "explore":
-      return <DataExplorer />;
-    case "sql":
+      // The Data view IS the SQL console (Phase 2 — replaced DataPanel + DataExplorer).
       // Pass the {sql,n} object so re-opening the SAME statement (n increments) still
       // re-fires SqlConsole's inject effect.
       return <SqlConsole injected={injectedSql ?? null} />;

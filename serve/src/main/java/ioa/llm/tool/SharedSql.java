@@ -205,16 +205,51 @@ public final class SharedSql {
         try {
             Handles h = handles();
             Object df = h.tablesMethod.invoke(h.sql);
-            int n = (int) h.dfNrow.invoke(df);
-            Object col = h.dfColumnByName.invoke(df, "table_name");
-            List<String> names = new ArrayList<>(n);
-            for (int i = 0; i < n; i++) {
-                names.add(String.valueOf(h.vecGet.invoke(col, i)));
-            }
-            return names;
+            return columnAsStrings(h, df, "table_name");
         } catch (ReflectiveOperationException e) {
             throw toToolException(e, "SQL tables() failed");
         }
+    }
+
+    /** One column of a table/view: its name and DuckDB type. */
+    public record Column(String name, String type) {}
+
+    /**
+     * Returns the columns of a table or view via DuckDB {@code DESCRIBE}. The table name is
+     * validated by base's safe-identifier guard inside the engine, but we also reject names
+     * that aren't plain identifiers here to keep the DESCRIBE text injection-free.
+     */
+    public static List<Column> describe(String table) throws ToolException {
+        if (table == null || !table.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            throw new ToolException("Invalid table name: " + table);
+        }
+        try {
+            Handles h = handles();
+            Object df = h.query.invoke(h.sql, "DESCRIBE \"" + table + "\"");
+            List<String> names = columnAsStrings(h, df, "column_name");
+            List<String> types = columnAsStrings(h, df, "column_type");
+            List<Column> cols = new ArrayList<>(names.size());
+            for (int i = 0; i < names.size(); i++) {
+                cols.add(new Column(names.get(i), i < types.size() ? types.get(i) : ""));
+            }
+            return cols;
+        } catch (InvocationTargetException e) {
+            throw toToolException(e, "SQL describe failed");
+        } catch (ReflectiveOperationException e) {
+            throw toToolException(e, "SQL bridge unavailable");
+        }
+    }
+
+    /** Extracts a named String column from a DataFrame reflectively. */
+    private static List<String> columnAsStrings(Handles h, Object df, String colName)
+            throws ReflectiveOperationException {
+        int n = (int) h.dfNrow.invoke(df);
+        Object col = h.dfColumnByName.invoke(df, colName);
+        List<String> out = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            out.add(String.valueOf(h.vecGet.invoke(col, i)));
+        }
+        return out;
     }
 
     /**

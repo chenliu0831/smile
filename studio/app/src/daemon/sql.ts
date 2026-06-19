@@ -92,3 +92,49 @@ function intHeader(res: Response, name: string, fallback: number): number {
   const n = v == null ? NaN : parseInt(v, 10);
   return Number.isFinite(n) ? n : fallback;
 }
+
+/** A column in a shared-session table. */
+export interface TableColumn {
+  name: string;
+  type: string;
+}
+
+/** A table/view in the shared DuckDB session (schema rail). */
+export interface TableInfo {
+  name: string;
+  columns: TableColumn[];
+  /** The defining SELECT, when the daemon recorded it (derived tables); else null. */
+  definition: string | null;
+}
+
+/** Lists the tables/views in the shared session with columns + lineage. */
+export async function fetchTables(httpBase: string): Promise<TableInfo[]> {
+  const res = await fetch(`${httpBase}/tables`);
+  if (!res.ok) return [];
+  const body = await res.json().catch(() => null);
+  return Array.isArray(body) ? body : [];
+}
+
+/**
+ * Materializes a SELECT as a named, chainable table on the shared session. Non-destructive
+ * by default: if the name is taken, the daemon returns 409 (surfaced as SqlRunError with
+ * status 409) so the caller can offer to overwrite. Pass overwrite=true to replace.
+ */
+export async function saveAsTable(
+  httpBase: string,
+  name: string,
+  select: string,
+  overwrite = false,
+): Promise<string[]> {
+  const res = await fetch(`${httpBase}/sql/save`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, select, overwrite }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new SqlRunError(body?.error ?? `Save failed (${res.status})`, res.status);
+  }
+  const body = await res.json();
+  return Array.isArray(body.tables) ? body.tables : [];
+}
