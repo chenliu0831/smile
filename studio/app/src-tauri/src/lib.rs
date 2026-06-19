@@ -26,6 +26,12 @@ const CONFIG_KEY: &str = "llm";
 const KEYRING_SERVICE: &str = "dev.smile.studio";
 const KEYRING_USER: &str = "llm-api-key";
 
+/// PYTHONPATH entry separator: ':' on unix, ';' on Windows.
+#[cfg(windows)]
+const PATH_SEP: &str = ";";
+#[cfg(not(windows))]
+const PATH_SEP: &str = ":";
+
 /// LLM configuration the Webview can read/write (no secret here).
 #[derive(Serialize, Deserialize, Clone, Default)]
 pub struct LlmConfig {
@@ -74,6 +80,8 @@ pub fn build_daemon_invocation(
     session_token: &str,
     jar: &str,
     smile_home: &str,
+    ioa_jar: &str,
+    ioa_overlay: &str,
     port: u16,
 ) -> DaemonInvocation {
     let mut args = vec![
@@ -109,6 +117,24 @@ pub fn build_daemon_invocation(
     let mut env = Vec::new();
     if !credential.is_empty() {
         env.push((token_env_var(&cfg.provider).to_string(), credential.to_string()));
+    }
+    // The agent's Python-backed skills run `python3 -m ioa.agent...`, which resolves
+    // the `ioa` package by zipimport FROM the ioa-agent jar — so that jar must be on
+    // PYTHONPATH. The agent's Bash tool spawns python as a subprocess that inherits
+    // this JVM env, so setting it here is what makes every skill importable. Without
+    // it: "ModuleNotFoundError: No module named 'ioa'".
+    //
+    // `ioa_overlay` (a repo-owned dir) is placed AHEAD of the jar so it shadows specific
+    // skill scripts (`ioa` is a PEP-420 namespace package, so the two merge). Today it
+    // carries a one-line pandas-2/numpy-2 fix for the summarize skill's analyze.py.
+    let pythonpath = match (ioa_overlay.is_empty(), ioa_jar.is_empty()) {
+        (false, false) => format!("{ioa_overlay}{SEP}{ioa_jar}", SEP = PATH_SEP),
+        (true, false) => ioa_jar.to_string(),
+        (false, true) => ioa_overlay.to_string(),
+        (true, true) => String::new(),
+    };
+    if !pythonpath.is_empty() {
+        env.push(("PYTHONPATH".to_string(), pythonpath));
     }
     DaemonInvocation { args, env }
 }
@@ -242,9 +268,24 @@ fn start_daemon(
     });
     let smile_home = std::env::var("SMILE_HOME")
         .unwrap_or_else(|_| repo_root.to_string_lossy().into_owned());
+    // The ioa-agent jar doubles as the Python package source for the agent's skills
+    // (zipimport of `ioa.*`); it must be on the daemon's PYTHONPATH. Vendored under
+    // serve/lib/ (the same jar Gradle puts on the daemon classpath).
+    let ioa_jar = std::env::var("SMILE_IOA_JAR").unwrap_or_else(|_| {
+        repo_root.join("serve/lib/ioa-agent-1.0.0.jar").to_string_lossy().into_owned()
+    });
+    // Repo-owned overlay, shadowed ahead of the jar (one-line summarize fix; see the
+    // overlay's analyze.py header). Empty if the dir is absent so we don't add a bogus
+    // PYTHONPATH entry.
+    let ioa_overlay = std::env::var("SMILE_IOA_OVERLAY").unwrap_or_else(|_| {
+        let p = repo_root.join("serve/ioa-overlay");
+        if p.is_dir() { p.to_string_lossy().into_owned() } else { String::new() }
+    });
 
     let port = free_port()?;
-    let inv = build_daemon_invocation(&cfg, &credential, &session_token, &jar, &smile_home, port);
+    let inv = build_daemon_invocation(
+        &cfg, &credential, &session_token, &jar, &smile_home, &ioa_jar, &ioa_overlay, port,
+    );
 
     let mut cmd = Command::new("java");
     cmd.args(&inv.args).current_dir(&working_dir);
@@ -376,6 +417,8 @@ mod tests {
             "sess-xyz",
             "/x/quarkus-run.jar",
             "/repo",
+            "/repo/serve/lib/ioa-agent-1.0.0.jar",
+            "/repo/serve/ioa-overlay",
             9999,
         );
         assert!(inv.args.contains(&"-Dsmile.daemon.engine=agent".to_string()));
@@ -385,7 +428,7 @@ mod tests {
         assert!(inv.args.contains(&"-Dquarkus.http.port=9999".to_string()));
         assert!(inv.args.contains(&"-Dsmile.daemon.token=sess-xyz".to_string()));
         // The LLM credential goes to the provider env var, never an arg.
-        assert_eq!(inv.env, vec![("AWS_BEARER_TOKEN_BEDROCK".to_string(), "tok-123".to_string())]);
+        assert!(inv.env.contains(&("AWS_BEARER_TOKEN_BEDROCK".to_string(), "tok-123".to_string())));
         assert!(!inv.args.iter().any(|a| a.contains("tok-123")));
         // jar is the last arg, preceded by -jar
         assert_eq!(inv.args.last().unwrap(), "/x/quarkus-run.jar");
@@ -399,19 +442,67 @@ mod tests {
             "sess",
             "/x.jar",
             "/repo",
+            "/repo/serve/lib/ioa-agent-1.0.0.jar",
+            "/repo/serve/ioa-overlay",
             8000,
         );
-        assert_eq!(inv.env[0].0, "ANTHROPIC_API_KEY");
+        assert!(inv.env.iter().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
         assert!(!inv.args.iter().any(|a| a.starts_with("-Dsmile.daemon.llm.baseUrl")));
     }
 
     #[test]
     fn missing_credential_yields_no_env_override_but_keeps_session_token() {
         let inv = build_daemon_invocation(
-            &cfg("bedrock", "u", "m"), "", "sess", "/x.jar", "/repo", 8000,
+            &cfg("bedrock", "u", "m"), "", "sess", "/x.jar", "/repo", "", "", 8000,
         );
+        // No credential and no ioa jar/overlay => no env at all.
         assert!(inv.env.is_empty());
         assert!(inv.args.contains(&"-Dsmile.daemon.token=sess".to_string()));
+    }
+
+    #[test]
+    fn pythonpath_puts_overlay_ahead_of_jar_so_fixed_scripts_shadow_the_jar() {
+        // The agent's Python skills `import ioa` by zipimport from the jar; the overlay
+        // dir must come FIRST so its fixed scripts win (PEP-420 namespace merge). Without
+        // PYTHONPATH the daemon hits "No module named 'ioa'".
+        let inv = build_daemon_invocation(
+            &cfg("bedrock", "u", "m"),
+            "tok",
+            "sess",
+            "/x.jar",
+            "/repo",
+            "/repo/serve/lib/ioa-agent-1.0.0.jar",
+            "/repo/serve/ioa-overlay",
+            8000,
+        );
+        let pythonpath = inv
+            .env
+            .iter()
+            .find(|(k, _)| k == "PYTHONPATH")
+            .map(|(_, v)| v.clone())
+            .expect("PYTHONPATH must be set");
+        let expected = format!("/repo/serve/ioa-overlay{PATH_SEP}/repo/serve/lib/ioa-agent-1.0.0.jar");
+        assert_eq!(pythonpath, expected);
+        // Overlay precedes the jar.
+        assert!(pythonpath.find("ioa-overlay").unwrap() < pythonpath.find("ioa-agent-1.0.0.jar").unwrap());
+    }
+
+    #[test]
+    fn pythonpath_falls_back_to_jar_only_when_no_overlay() {
+        let inv = build_daemon_invocation(
+            &cfg("bedrock", "u", "m"),
+            "tok",
+            "sess",
+            "/x.jar",
+            "/repo",
+            "/repo/serve/lib/ioa-agent-1.0.0.jar",
+            "",
+            8000,
+        );
+        assert!(inv.env.contains(&(
+            "PYTHONPATH".to_string(),
+            "/repo/serve/lib/ioa-agent-1.0.0.jar".to_string()
+        )));
     }
 
     #[test]
