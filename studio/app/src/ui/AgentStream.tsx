@@ -4,7 +4,7 @@
  * clarify/approval gates (ADR-0010), and a chat input. This is the interactive spine —
  * a Cursor/Claude-Code-style prompting experience.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ChatTurn, Gate, Todo, ToolCall } from "../daemon/protocol";
 import { TodoChecklist } from "./TodoChecklist";
 
@@ -142,6 +142,7 @@ export function AgentStream({
   todos,
   openGates,
   streaming,
+  welcome,
   onSend,
   onResolveGate,
   onApproveGate,
@@ -151,6 +152,8 @@ export function AgentStream({
   todos: Todo[];
   openGates: Gate[];
   streaming: boolean;
+  /** Cold-start hero shown when there are no turns yet (revamp). */
+  welcome?: ReactNode;
   onSend: (text: string) => void;
   onResolveGate: (gateId: string, answer: string) => void;
   onApproveGate: (gateId: string) => void;
@@ -179,9 +182,8 @@ export function AgentStream({
       <div className="zone-title">Agent · Clair</div>
       <TodoChecklist todos={todos} />
       <div className="stream-body" ref={bodyRef}>
-        {turns.length === 0 && (
-          <div className="stream-empty">Ask Clair to analyze a dataset to begin.</div>
-        )}
+        {turns.length === 0 &&
+          (welcome ?? <div className="stream-empty">Ask Clair to analyze a dataset to begin.</div>)}
         {turns.map((t) => <TurnView key={t.id} turn={t} />)}
         {openGates.map((g) => (
           <GateCard key={g.id} gate={g} onResolve={onResolveGate} onApprove={onApproveGate} />

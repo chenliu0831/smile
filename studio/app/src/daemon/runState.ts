@@ -72,14 +72,11 @@ export function appendUserTurn(state: RunState, text: string): RunState {
 
 export function reduceRun(state: RunState, msg: DaemonMessage): RunState {
   switch (msg.type) {
-    case "session-started": {
-      const base = { ...state, sessionId: msg.sessionId, status: "running" as const };
-      if (msg.greeting) {
-        const greet: ChatTurn = { id: nextTurnId("agent"), role: "agent", text: msg.greeting, toolCalls: [], status: "done" };
-        return { ...base, turns: [...base.turns, greet] };
-      }
-      return base;
-    }
+    case "session-started":
+      // The greeting is owned by the cold-start welcome hero (ChatWelcome), NOT a
+      // transcript turn — otherwise turns.length>0 would suppress the welcome (with its
+      // starter chips + load CTA) the moment the session connects.
+      return { ...state, sessionId: msg.sessionId, status: "running" };
 
     case "run-started":
       return { ...state, sessionId: msg.runId, goal: msg.goal, status: "running", stages: msg.stages };

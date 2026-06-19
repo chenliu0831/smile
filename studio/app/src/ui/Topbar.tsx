@@ -55,12 +55,18 @@ export function Topbar() {
         {loading ? "Loading…" : dataset ? "Change Dataset" : "Load Dataset"}
       </button>
 
-      <span className={`status-pill ${state.status}`}>
-        {state.status === "running"
-          ? "Running"
+      {/* "Working" only while a turn is actually streaming; otherwise reflect that the
+          session is connected/ready — not a misleading "Running" on mere connection. */}
+      <span className={`status-pill ${state.streaming ? "working" : state.status}`}>
+        {state.streaming
+          ? "Working…"
           : state.status === "completed"
-            ? "Completed"
-            : state.status}
+            ? "Ready"
+            : state.status === "running"
+              ? "Ready"
+              : state.status === "idle"
+                ? "Connecting…"
+                : state.status}
       </span>
       <button className="icon-btn" title="Settings" onClick={() => setSettingsOpen(true)}>
         ⚙

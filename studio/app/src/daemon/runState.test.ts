@@ -5,7 +5,7 @@ const stages: StageProgress[] = [
   { stageId: "eda", label: "Exploratory Data Analysis", status: "pending", artifactRefs: [] },
 ];
 
-test("session-started sets the session id and marks the session running", () => {
+test("session-started sets the session id and marks the session running, with no turns", () => {
   const s = reduceRun(initialRunState, {
     type: "session-started",
     sessionId: "s1",
@@ -13,8 +13,9 @@ test("session-started sets the session id and marks the session running", () => 
   });
   expect(s.sessionId).toBe("s1");
   expect(s.status).toBe("running");
-  // A greeting seeds an initial agent turn so the user sees a welcome.
-  expect(s.turns.at(-1)).toMatchObject({ role: "agent", text: "Hi, I'm Clair.", status: "done" });
+  // The greeting is owned by the cold-start welcome hero, NOT a transcript turn —
+  // so turns stay empty and the welcome (chips + load CTA) shows until first interaction.
+  expect(s.turns).toHaveLength(0);
 });
 
 test("appendUserTurn adds a user turn and marks the session streaming", () => {

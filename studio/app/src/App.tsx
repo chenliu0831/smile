@@ -1,5 +1,5 @@
-import { Shell } from "./ui/Shell";
+import { Workspace } from "./ui/Workspace";
 
 export function App() {
-  return <Shell />;
+  return <Workspace />;
 }
