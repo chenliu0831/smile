@@ -246,6 +246,21 @@ public class Arrow {
      * @throws IOException when fails to write the file.
      */
     public void write(DataFrame data, Path path) throws IOException {
+        try (OutputStream output = Files.newOutputStream(path)) {
+            write(data, output);
+        }
+    }
+
+    /**
+     * Writes the data frame to an output stream as an Arrow IPC stream. The caller
+     * owns the stream and is responsible for closing it. This is the streaming seam
+     * used to serve query results directly over HTTP without a temp file.
+     *
+     * @param data the data frame.
+     * @param output the output stream to write the Arrow IPC stream to.
+     * @throws IOException when fails to write the stream.
+     */
+    public void write(DataFrame data, OutputStream output) throws IOException {
         Schema schema = toArrow(data.schema());
         /*
          * When a field is dictionary encoded, the values are represented
@@ -261,7 +276,6 @@ public class Arrow {
         DictionaryProvider provider = new DictionaryProvider.MapDictionaryProvider();
         try (BufferAllocator allocator = new RootAllocator(Long.MAX_VALUE);
              VectorSchemaRoot root = VectorSchemaRoot.create(schema, allocator);
-             OutputStream output = Files.newOutputStream(path);
              ArrowStreamWriter writer = new ArrowStreamWriter(root, provider, output)) {
 
             writer.start();

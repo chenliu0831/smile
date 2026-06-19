@@ -16,9 +16,13 @@ const KIND_ICON: Record<string, string> = {
   dataviz: "▦",
   skill: "✦",
   script: "λ",
+  sql: "⌗",
 };
 
-function ToolCallCard({ call }: { call: ToolCall }) {
+function ToolCallCard({ call, onOpenSql }: { call: ToolCall; onOpenSql?: (sql: string) => void }) {
+  // SQL cards are first-class and editable: the user can drop the agent's statement
+  // straight into the SQL console (Count-style "no black boxes").
+  const canOpen = call.kind === "sql" && !!call.code && !!onOpenSql;
   return (
     <details className="toolcall">
       <summary>
@@ -33,13 +37,21 @@ function ToolCallCard({ call }: { call: ToolCall }) {
       </summary>
       <div className="tc-body">
         {call.code && <pre>{call.code}</pre>}
+        {canOpen && (
+          <button
+            className="tc-open-sql"
+            onClick={() => onOpenSql!(call.code!)}
+          >
+            Open in console →
+          </button>
+        )}
         {call.output && <pre>{call.output}</pre>}
       </div>
     </details>
   );
 }
 
-function TurnView({ turn }: { turn: ChatTurn }) {
+function TurnView({ turn, onOpenSql }: { turn: ChatTurn; onOpenSql?: (sql: string) => void }) {
   if (turn.role === "user") {
     return (
       <div className="turn user">
@@ -51,7 +63,7 @@ function TurnView({ turn }: { turn: ChatTurn }) {
   return (
     <div className="turn agent">
       <div className="turn-role">Clair</div>
-      {turn.toolCalls.map((c) => <ToolCallCard key={c.id} call={c} />)}
+      {turn.toolCalls.map((c) => <ToolCallCard key={c.id} call={c} onOpenSql={onOpenSql} />)}
       {turn.text && <div className="turn-text agent-text">{turn.text}</div>}
       {turn.status === "streaming" && !turn.text && <div className="turn-thinking">Thinking…</div>}
     </div>
@@ -147,6 +159,7 @@ export function AgentStream({
   onResolveGate,
   onApproveGate,
   onCancel,
+  onOpenSql,
 }: {
   turns: ChatTurn[];
   todos: Todo[];
@@ -158,6 +171,8 @@ export function AgentStream({
   onResolveGate: (gateId: string, answer: string) => void;
   onApproveGate: (gateId: string) => void;
   onCancel: () => void;
+  /** Open an agent SQL statement in the SQL console (sql tool cards). */
+  onOpenSql?: (sql: string) => void;
 }) {
   const [draft, setDraft] = useState("");
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -184,7 +199,7 @@ export function AgentStream({
       <div className="stream-body" ref={bodyRef}>
         {turns.length === 0 &&
           (welcome ?? <div className="stream-empty">Ask Clair to analyze a dataset to begin.</div>)}
-        {turns.map((t) => <TurnView key={t.id} turn={t} />)}
+        {turns.map((t) => <TurnView key={t.id} turn={t} onOpenSql={onOpenSql} />)}
         {openGates.map((g) => (
           <GateCard key={g.id} gate={g} onResolve={onResolveGate} onApprove={onApproveGate} />
         ))}

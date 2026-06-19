@@ -4,7 +4,7 @@
  * recognition, not recall (VS Code activity-bar pattern). Selecting a view swaps the
  * single canvas region; nothing here can be destroyed.
  */
-export type CanvasView = "overview" | "data" | "explore" | "pipeline" | "leaderboard";
+export type CanvasView = "overview" | "data" | "explore" | "sql" | "pipeline" | "leaderboard";
 
 export interface ViewDef {
   id: CanvasView;

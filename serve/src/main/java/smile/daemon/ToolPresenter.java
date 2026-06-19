@@ -43,7 +43,12 @@ final class ToolPresenter {
         }
         if (tool instanceof SQL s) {
             String body = s.statement != null ? s.statement : s.command;
-            return new Card("script", titleOf("SQL", body), body);
+            // kind="sql" makes the agent's SQL a first-class, editable card (the user can
+            // open it in the SQL console). When the statement creates a table, surface the
+            // name in the title so the shared-session table is discoverable.
+            String created = createdTableName(body);
+            String title = created != null ? "SQL → " + created : titleOf("SQL", body);
+            return new Card("sql", title, body);
         }
         if (tool instanceof DataViz d) {
             String code = "plot=" + d.plot + (d.x != null ? ", x=" + d.x : "")
@@ -84,6 +89,18 @@ final class ToolPresenter {
         }
         // Fallback: unknown tool — keep the generic script card with no preview.
         return new Card("script", tool.getClass().getSimpleName(), null);
+    }
+
+    /** Pattern: CREATE [OR REPLACE] [TEMP] TABLE|VIEW <name> ... — captures the name. */
+    private static final java.util.regex.Pattern CREATE_TABLE = java.util.regex.Pattern.compile(
+            "(?is)^\\s*create\\s+(?:or\\s+replace\\s+)?(?:temp(?:orary)?\\s+)?(?:table|view)\\s+"
+                    + "(?:if\\s+not\\s+exists\\s+)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?");
+
+    /** The table/view name a CREATE statement defines, or null if it isn't one. */
+    private static String createdTableName(String sql) {
+        if (sql == null) return null;
+        var m = CREATE_TABLE.matcher(sql);
+        return m.find() ? m.group(1) : null;
     }
 
     private static String titleOf(String prefix, String cmd) {

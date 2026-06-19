@@ -25,6 +25,15 @@ import smile.util.Strings;
 /**
  * An in-process SQL database management interface.
  *
+ * <p>All methods that touch the underlying JDBC {@link Connection} — the statement-execution
+ * methods ({@link #query}, {@link #update}, {@link #execute}), the bulk loaders
+ * ({@link #csv}, {@link #parquet}, {@link #json}, {@link #iceberg}), and {@link #describe} —
+ * are {@code synchronized} on this instance. The single shared Connection's transaction
+ * state is not safe under concurrent statements, so they are serialized when one {@code SQL}
+ * instance is shared across threads (e.g. an interactive UI and an agent both using the same
+ * in-memory database). Methods that build on these (e.g. {@link #export}, {@code tables},
+ * the extension helpers) inherit the serialization through them.
+ *
  * @author Haifeng Li
  */
 public class SQL implements AutoCloseable {
@@ -52,6 +61,14 @@ public class SQL implements AutoCloseable {
     /** JDBC connection. */
     private final Connection db;
 
+    /**
+     * Per-statement timeout in seconds, applied via {@link Statement#setQueryTimeout(int)}.
+     * 0 (the default) means no timeout. A positive value lets the DuckDB driver abort a
+     * runaway statement so it does not hold this instance's monitor indefinitely — important
+     * when the instance is shared between an interactive UI and an agent.
+     */
+    private volatile int queryTimeoutSeconds = 0;
+
     static {
         try {
             Class.forName("org.duckdb.DuckDBDriver");
@@ -75,6 +92,25 @@ public class SQL implements AutoCloseable {
      */
     public SQL(String path) throws SQLException {
         db = DriverManager.getConnection("jdbc:duckdb:" + path);
+    }
+
+    /**
+     * Sets a per-statement timeout. A positive value makes the driver abort a statement that
+     * runs longer than {@code seconds}, so a runaway query cannot hold this instance's
+     * monitor (and thus block other callers sharing the instance) indefinitely.
+     *
+     * @param seconds the timeout in seconds; 0 (the default) disables the timeout.
+     * @return this object.
+     */
+    public SQL queryTimeout(int seconds) {
+        this.queryTimeoutSeconds = Math.max(0, seconds);
+        return this;
+    }
+
+    /** Applies the configured query timeout to a statement (no-op when 0). */
+    private void applyTimeout(Statement stmt) throws SQLException {
+        int t = queryTimeoutSeconds;
+        if (t > 0) stmt.setQueryTimeout(t);
     }
 
     @Override
@@ -156,7 +192,7 @@ public class SQL implements AutoCloseable {
      * @return the data frame of table columns.
      * @throws SQLException if fail to query metadata.
      */
-    public DataFrame describe(String table) throws SQLException {
+    public synchronized DataFrame describe(String table) throws SQLException {
         DatabaseMetaData meta = db.getMetaData();
         try (var rs = meta.getColumns(null, null, table, null)) {
             DataFrame df = DataFrame.of(rs);
@@ -195,7 +231,7 @@ public class SQL implements AutoCloseable {
      * @return this object.
      * @throws SQLException if fail to read the files or create the in-memory table.
      */
-    public SQL csv(String name, char delimiter, Map<String, String> columns, String... path) throws SQLException {
+    public synchronized SQL csv(String name, char delimiter, Map<String, String> columns, String... path) throws SQLException {
         // Reject delimiter characters that could break the SQL literal.
         String delimStr = String.valueOf(delimiter);
         if (DANGEROUS_IN_LITERAL.matcher(delimStr).find() || delimiter == '\'') {
@@ -244,7 +280,7 @@ public class SQL implements AutoCloseable {
      * @return this object.
      * @throws SQLException if fail to read the files or create the in-memory table.
      */
-    public SQL iceberg(String name, String path, boolean allowMovedPaths) throws SQLException {
+    public synchronized SQL iceberg(String name, String path, boolean allowMovedPaths) throws SQLException {
         String query = String.format("""
                 CREATE TABLE %s AS
                 SELECT * FROM iceberg_scan('%s', allow_moved_paths = %s);""",
@@ -298,7 +334,7 @@ public class SQL implements AutoCloseable {
      * @return this object.
      * @throws SQLException if fail to read the files or create the in-memory table.
      */
-    public SQL parquet(String name, Map<String, String> options, String... path) throws SQLException {
+    public synchronized SQL parquet(String name, Map<String, String> options, String... path) throws SQLException {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("""
                 CREATE TABLE %s AS
@@ -351,7 +387,7 @@ public class SQL implements AutoCloseable {
      * @return this object.
      * @throws SQLException if fail to read the files or create the in-memory table.
      */
-    public SQL json(String name, String format, Map<String, String> columns, String... path) throws SQLException {
+    public synchronized SQL json(String name, String format, Map<String, String> columns, String... path) throws SQLException {
         StringBuilder sb = new StringBuilder();
         sb.append(String.format("""
                 CREATE TABLE %s AS
@@ -526,9 +562,10 @@ public class SQL implements AutoCloseable {
      *         to execute.
      * @throws IllegalArgumentException if {@code sql} is null or blank.
      */
-    public DataFrame query(String sql) throws SQLException {
+    public synchronized DataFrame query(String sql) throws SQLException {
         logger.info(sql);
         try (var stmt = db.prepareStatement(requireSingleStatement(sql))) {
+            applyTimeout(stmt);
             return DataFrame.of(stmt.executeQuery());
         }
     }
@@ -550,9 +587,10 @@ public class SQL implements AutoCloseable {
      *         to execute.
      * @throws IllegalArgumentException if {@code sql} is null or blank.
      */
-    public int update(String sql) throws SQLException {
+    public synchronized int update(String sql) throws SQLException {
         logger.info(sql);
         try (var stmt = db.prepareStatement(requireSingleStatement(sql))) {
+            applyTimeout(stmt);
             return stmt.executeUpdate();
         }
     }
@@ -571,9 +609,10 @@ public class SQL implements AutoCloseable {
      * @throws SQLException if the statement fails to execute.
      * @throws IllegalArgumentException if {@code sql} is null or blank.
      */
-    public boolean execute(String sql) throws SQLException {
+    public synchronized boolean execute(String sql) throws SQLException {
         logger.info(sql);
         try (var stmt = db.createStatement()) {
+            applyTimeout(stmt);
             return stmt.execute(requireSingleStatement(sql));
         }
     }

@@ -339,4 +339,73 @@ public class SQLTest {
                     () -> sql.parquet("mytable", opts, "/some/file.parquet"));
         }
     }
+
+    // -----------------------------------------------------------------------
+    // Concurrency – one shared SQL instance is used by multiple threads
+    // (the interactive UI and the agent share the agent's singleton). The
+    // single JDBC Connection's transaction state is not safe under concurrent
+    // statements, so query/update/execute are synchronized; this asserts that
+    // heavy concurrent use neither throws nor corrupts results.
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testQueryTimeoutAbortsRunawayStatement() throws Exception {
+        System.out.println("SQL – queryTimeout aborts a runaway statement (releases the lock)");
+        try (SQL sql = new SQL()) {
+            sql.queryTimeout(1); // 1 second
+            long start = System.currentTimeMillis();
+            // A deliberately expensive cross join that would run far longer than 1s.
+            assertThrows(SQLException.class, () ->
+                    sql.query("SELECT COUNT(*) FROM range(100000000) a, range(100000000) b"));
+            long elapsed = System.currentTimeMillis() - start;
+            // The driver should abort within a few seconds, not run to completion.
+            assertTrue(elapsed < 20_000, "query should have been cancelled quickly, took " + elapsed + "ms");
+            // The instance is still usable afterwards (lock released, connection intact).
+            assertEquals(1L, ((Number) sql.query("SELECT 1 AS x").get(0, 0)).longValue());
+        }
+    }
+
+    @Test
+    public void testConcurrentStatementsAreSerialized() throws Exception {
+        System.out.println("SQL – concurrent statements on a shared instance are serialized");
+        try (SQL sql = new SQL()) {
+            sql.execute("CREATE TABLE t AS SELECT * FROM range(1000) AS r(i)");
+
+            int threads = 8;
+            int iterations = 40;
+            var pool = java.util.concurrent.Executors.newFixedThreadPool(threads);
+            var errors = new java.util.concurrent.ConcurrentLinkedQueue<Throwable>();
+            var tasks = new java.util.ArrayList<java.util.concurrent.Callable<Void>>();
+            for (int n = 0; n < threads; n++) {
+                final int id = n;
+                tasks.add(() -> {
+                    try {
+                        for (int k = 0; k < iterations; k++) {
+                            if (id % 2 == 0) {
+                                // Readers: the count must always be exactly 1000.
+                                DataFrame df = sql.query("SELECT COUNT(*) AS c FROM t");
+                                long c = ((Number) df.get(0, 0)).longValue();
+                                if (c != 1000) errors.add(new AssertionError("expected 1000, got " + c));
+                            } else {
+                                // Writers: a per-thread derived table via DDL + a SELECT.
+                                // CAST the SUM to BIGINT: DuckDB's SUM(BIGINT) yields HUGEINT
+                                // (JDBCType OTHER) which the result bridge doesn't map — that
+                                // composite-type handling is the /sql endpoint's job, not this
+                                // concurrency test's.
+                                sql.execute("CREATE OR REPLACE TABLE d_" + id
+                                        + " AS SELECT i, i*2 AS j FROM t WHERE i < 10");
+                                sql.query("SELECT CAST(SUM(j) AS BIGINT) AS s FROM d_" + id);
+                            }
+                        }
+                    } catch (Throwable e) {
+                        errors.add(e);
+                    }
+                    return null;
+                });
+            }
+            for (var f : pool.invokeAll(tasks)) f.get();
+            pool.shutdown();
+            assertTrue(errors.isEmpty(), "concurrent SQL raised: " + errors);
+        }
+    }
 }

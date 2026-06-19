@@ -367,3 +367,36 @@ button {
 
 /* Status pill: "Working…" state. */
 .status-pill.working { background: var(--accent-soft); color: var(--accent); }
+
+/* ===== SQL console (SQL-driven exploration, Phase 1) ===== */
+.sql-console { display: flex; flex-direction: column; gap: 10px; height: 100%; }
+.sql-editor-row { display: flex; gap: 8px; align-items: stretch; }
+.sql-editor {
+  flex: 1; min-height: 72px; resize: vertical; font-family: var(--mono); font-size: 13px;
+  line-height: 1.5; background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 12px;
+}
+.sql-editor:focus { outline: none; border-color: var(--accent); }
+.sql-run {
+  align-self: flex-start; padding: 8px 18px; border-radius: 8px; border: none;
+  font-size: 13px; font-weight: 600; background: var(--accent); color: #06121b;
+}
+.sql-run:disabled { opacity: 0.45; cursor: not-allowed; }
+.sql-badge {
+  font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; align-self: flex-start;
+}
+.sql-badge.bad { color: var(--bad); border-color: var(--bad); }
+.sql-badge.dim { opacity: 0.7; }
+.sql-trunc { color: var(--warn); }
+.sql-result { flex: 1; min-height: 0; }
+.sql-effect { font-size: 13px; color: var(--text); padding: 10px 0; }
+.sql-tables { font-size: 12px; color: var(--text-dim); margin-top: 6px; font-family: var(--mono); }
+
+/* SQL tool-call card: kind glyph + "Open in console" affordance. */
+.tc-kind.kind-sql { color: var(--accent); border-color: var(--accent); }
+.tc-open-sql {
+  margin-top: 8px; padding: 5px 10px; border-radius: 6px; font-size: 12px;
+  background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent);
+}
+.tc-open-sql:hover { background: var(--accent); color: #06121b; }

@@ -168,4 +168,23 @@ public class ArrowTest {
         assertEquals(5.94, output.get(2, 0), 1E-10);
         assertEquals(0.99, output.get(3, 0), 1E-10);
     }
+
+    /**
+     * Test of write(DataFrame, OutputStream): the streaming overload that serves
+     * query results over HTTP. Round-trips through an in-memory byte stream and
+     * must reproduce the same frame the file-based write/read produces.
+     */
+    @Test
+    public void testWriteToOutputStream() throws Exception {
+        System.out.println("write to OutputStream");
+        var bos = new java.io.ByteArrayOutputStream();
+        arrow.write(df, bos);
+        assertTrue(bos.size() > 0, "Arrow stream should not be empty");
+
+        DataFrame round = arrow.read(new java.io.ByteArrayInputStream(bos.toByteArray()), Integer.MAX_VALUE);
+        assertEquals(df.size(), round.size());
+        assertEquals(df.schema(), round.schema());
+        assertEquals(df.getString(0, 0), round.getString(0, 0));
+        assertEquals(df.getDouble(0, 5), round.getDouble(0, 5), 1E-10);
+    }
 }

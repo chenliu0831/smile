@@ -56,8 +56,17 @@ public class ToolPresenterTest {
         var s = new SQL();
         s.statement = "SELECT count(*) FROM churn";
         var card = ToolPresenter.present(s);
-        assertEquals("script", card.kind());
+        assertEquals("sql", card.kind());
         assertEquals("SELECT count(*) FROM churn", card.code());
+    }
+
+    @Test
+    public void sqlCreateTableSurfacesTableNameInTitle() {
+        var s = new SQL();
+        s.statement = "CREATE OR REPLACE TABLE churn_active AS SELECT * FROM churn WHERE active";
+        var card = ToolPresenter.present(s);
+        assertEquals("sql", card.kind());
+        assertEquals("SQL → churn_active", card.title());
     }
 
     @Test

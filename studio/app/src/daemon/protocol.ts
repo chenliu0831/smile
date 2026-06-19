@@ -68,7 +68,7 @@ export interface ToolCall {
   /** Collapsed-card title, e.g. "Ran candidate_lgbm.py". */
   title: string;
   /** Coarse kind drives the icon/affordance. */
-  kind: "skill" | "script" | "shell" | "read" | "write" | "dataviz";
+  kind: "skill" | "script" | "shell" | "read" | "write" | "dataviz" | "sql";
   status: "running" | "done" | "failed";
   /** Expanded view: the code/command executed. */
   code?: string;
