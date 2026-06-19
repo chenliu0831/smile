@@ -59,6 +59,15 @@ button {
 }
 .status-pill.completed { background: #133a1e; color: var(--good); }
 
+/* Connection-mode badge: demo (scripted sample) vs failed daemon — so neither can be
+   mistaken for real analysis of the user's data. */
+.mode-badge {
+  font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+  margin-right: 8px; cursor: help; letter-spacing: 0.3px;
+}
+.mode-badge.demo { background: rgba(210,153,34,0.16); color: var(--warn); border: 1px solid var(--warn); }
+.mode-badge.error { background: rgba(248,81,73,0.14); color: var(--bad); border: 1px solid var(--bad); }
+
 /* ---- Canvas surfaces (Data / Explore panels) ---- */
 .surface { height: 100%; overflow: auto; padding: 16px; }
 .surface-note {

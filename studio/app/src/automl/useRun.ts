@@ -1,6 +1,6 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../daemon/runState";
-import { connectRun } from "../daemon/connect";
+import { connectRun, type ConnectionMode } from "../daemon/connect";
 import { pickAndLoadDataset, canLoadDataset, type LoadedDataset } from "../daemon/dataset";
 import { fetchDatasetInfo, type DatasetInfo } from "../daemon/datasetInfo";
 import type { RunConnection } from "../daemon/wsClient";
@@ -14,6 +14,8 @@ export interface RunController {
   datasetInfo: DatasetInfo | null;
   /** Daemon HTTP base for direct fetches (e.g. the explorer's full-data load), or null. */
   httpBase: string | null;
+  /** How the session is connected: a real daemon, the browser demo, or a failed daemon. */
+  mode: ConnectionMode;
   /** Whether dataset loading is available (desktop app only). */
   canLoadDataset: boolean;
   /** Prompt for a dataset file, stage it, and restart the session against it. */
@@ -57,6 +59,7 @@ export function useRun(): RunController {
   const [dataset, setDataset] = useState<LoadedDataset | null>(null);
   const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
   const [httpBase, setHttpBase] = useState<string | null>(null);
+  const [mode, setMode] = useState<ConnectionMode>("demo");
   const workingDirRef = useRef<string>(".");
 
   useEffect(() => {
@@ -65,12 +68,13 @@ export function useRun(): RunController {
     // Demo/screenshot aid: ?auto sends an opening message + auto-answers gates.
     const auto = typeof window !== "undefined" && window.location.search.includes("auto");
 
-    connectRun(350, workingDirRef.current).then((conn) => {
+    connectRun(350, workingDirRef.current).then(({ connection: conn, mode }) => {
       if (disposed) {
         conn.stop();
         return;
       }
       connRef.current = conn;
+      setMode(mode);
       unsub = conn.subscribe((msg) => {
         dispatch(msg);
         force((n) => n + 1);
@@ -110,6 +114,7 @@ export function useRun(): RunController {
     dataset,
     datasetInfo,
     httpBase,
+    mode,
     canLoadDataset: canLoadDataset(),
     loadDataset: async () => {
       const loaded = await pickAndLoadDataset();

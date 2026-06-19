@@ -159,6 +159,9 @@ pub struct RunningDaemon {
     child: Child,
     port: u16,
     token: String,
+    /// The working dir the daemon was launched in (where its `input/<dataset>` lives).
+    /// A reconnect requesting a DIFFERENT dir must relaunch, not reuse this one.
+    working_dir: String,
 }
 
 /// Repo root, resolved from the crate's compile-time location (studio/app/src-tauri),
@@ -244,9 +247,18 @@ fn start_daemon(
     working_dir: String,
 ) -> Result<DaemonInfo, String> {
     {
-        let guard = state.0.lock().unwrap();
+        let mut guard = state.0.lock().unwrap();
         if let Some(d) = guard.as_ref() {
-            return Ok(DaemonInfo { port: d.port, token: d.token.clone(), attached: true });
+            // Reuse the running daemon ONLY if it's already in the requested working dir.
+            // Otherwise it's serving a stale dataset (a different input/) — kill it so we
+            // relaunch below in the new dir. This is what makes a freshly-loaded dataset
+            // actually reach the agent instead of the previous one.
+            if d.working_dir == working_dir {
+                return Ok(DaemonInfo { port: d.port, token: d.token.clone(), attached: true });
+            }
+            if let Some(mut stale) = guard.take() {
+                let _ = stale.child.kill();
+            }
         }
     }
 
@@ -302,7 +314,12 @@ fn start_daemon(
         return Err("daemon did not start listening within 60s".into());
     }
 
-    *state.0.lock().unwrap() = Some(RunningDaemon { child, port, token: session_token.clone() });
+    *state.0.lock().unwrap() = Some(RunningDaemon {
+        child,
+        port,
+        token: session_token.clone(),
+        working_dir,
+    });
     Ok(DaemonInfo { port, token: session_token, attached: true })
 }
 
