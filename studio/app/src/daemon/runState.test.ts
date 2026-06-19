@@ -18,6 +18,14 @@ test("session-started sets the session id and marks the session running, with no
   expect(s.turns).toHaveLength(0);
 });
 
+test("initialRunState is a clean empty baseline (what a dataset-change reset returns to)", () => {
+  // useRun's reset action returns initialRunState; assert it carries no stale session data.
+  expect(initialRunState).toEqual({
+    sessionId: null, goal: "", status: "idle", streaming: false,
+    turns: [], stages: [], artifacts: {}, openGates: [], todos: [],
+  });
+});
+
 test("appendUserTurn adds a user turn and marks the session streaming", () => {
   const s = appendUserTurn(initialRunState, "analyze churn.csv");
   expect(s.turns).toHaveLength(1);

@@ -100,19 +100,31 @@ function WorkspaceInner() {
 function CanvasRegion({ view }: { view: CanvasView }) {
   const { state } = useRunContext();
   const artifacts = Object.values(state.artifacts);
+  // Pipeline view: selecting a stage focuses the canvas on that stage's artifacts
+  // (preserves the RunZones behavior).
+  const [selectedStage, setSelectedStage] = useState<string | null>(null);
 
   switch (view) {
     case "data":
       return <DataPanel />;
     case "explore":
       return <DataExplorer />;
-    case "pipeline":
+    case "pipeline": {
+      const selected = state.stages.find((s) => s.stageId === selectedStage);
+      const stageArtifacts = selected
+        ? selected.artifactRefs.map((r) => state.artifacts[r]).filter(Boolean)
+        : artifacts;
       return (
         <div className="canvas-pipeline">
-          <Timeline stages={state.stages} selectedId={null} onSelect={() => {}} />
-          <Canvas artifacts={artifacts} />
+          <Timeline
+            stages={state.stages}
+            selectedId={selectedStage}
+            onSelect={(id) => setSelectedStage(id === selectedStage ? null : id)}
+          />
+          <Canvas artifacts={stageArtifacts} />
         </div>
       );
+    }
     case "leaderboard": {
       const lb = state.artifacts["leaderboard"];
       return <Canvas artifacts={lb ? [lb] : artifacts} />;

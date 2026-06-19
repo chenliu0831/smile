@@ -30,11 +30,15 @@ export interface RunController {
   reconnect: (workingDir?: string) => void;
 }
 
-/** Local action: a user turn the UI appends optimistically (not a daemon message). */
-type LocalAction = { __local: "user-turn"; text: string };
+/** Local actions the UI dispatches that aren't daemon messages. */
+type LocalAction =
+  | { __local: "user-turn"; text: string }
+  /** Wipe session state (turns/stages/artifacts) — e.g. when a new dataset is loaded. */
+  | { __local: "reset" };
 
 function rootReducer(state: RunState, action: DaemonMessage | LocalAction): RunState {
   if ("__local" in action) {
+    if (action.__local === "reset") return initialRunState;
     return appendUserTurn(state, action.text);
   }
   return reduceRun(state, action);
@@ -111,7 +115,9 @@ export function useRun(): RunController {
       const loaded = await pickAndLoadDataset();
       if (!loaded) return; // cancelled
       setDataset(loaded);
+      setDatasetInfo(null); // cleared until the new daemon reports it
       workingDirRef.current = loaded.workingDir;
+      dispatch({ __local: "reset" }); // clear prior dataset's turns/stages/artifacts
       connRef.current?.stop();
       setGeneration((g) => g + 1); // reconnect against the new working dir
     },
@@ -128,6 +134,7 @@ export function useRun(): RunController {
     cancel: () => connRef.current?.cancel(),
     reconnect: (workingDir) => {
       if (workingDir) workingDirRef.current = workingDir;
+      dispatch({ __local: "reset" }); // fresh connection => fresh session state
       connRef.current?.stop();
       setGeneration((g) => g + 1); // re-run the effect with a fresh connection
     },
