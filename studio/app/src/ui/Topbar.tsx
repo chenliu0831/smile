@@ -14,7 +14,7 @@ function formatSize(bytes: number): string {
 }
 
 export function Topbar() {
-  const { state, dataset, canLoadDataset, loadDataset, mode } = useRunContext();
+  const { state, dataset, datasetInfo, canLoadDataset, loadDataset, mode } = useRunContext();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,7 +38,14 @@ export function Topbar() {
       </span>
       <span className="goal">{state.goal || "AutoML"}</span>
 
-      {dataset ? (
+      {/* Current-dataset clue — authoritative: prefer the daemon's detected dataset (with
+          dimensions, reflects what the agent actually analyzes) and fall back to the
+          in-app loaded file. Consistent with Workspace's hasDataset = datasetInfo || dataset. */}
+      {datasetInfo ? (
+        <span className="dataset-chip" title={`The agent is working with input/${datasetInfo.fileName}`}>
+          📄 {datasetInfo.fileName} <em>{datasetInfo.nrow.toLocaleString()}×{datasetInfo.ncol}</em>
+        </span>
+      ) : dataset ? (
         <span className="dataset-chip" title={dataset.workingDir}>
           📄 {dataset.fileName} <em>{formatSize(dataset.sizeBytes)}</em>
         </span>

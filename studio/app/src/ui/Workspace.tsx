@@ -28,6 +28,10 @@ function WorkspaceInner() {
   const hasDataset = !!datasetInfo || !!dataset;
   const hasArtifacts = Object.keys(state.artifacts).length > 0;
   const hasStages = state.stages.length > 0;
+  // Find the leaderboard by KIND, not by ref: the real daemon emits it under ref
+  // "candidates" (the stage id), only the mock uses ref "leaderboard". Keying on the ref
+  // left the Leaderboard view permanently disabled and never auto-revealed on real runs.
+  const leaderboard = Object.values(state.artifacts).find((a) => a.kind === "leaderboard");
   // The "Data" view IS the SQL console (Phase 2): it needs the daemon's /sql endpoint (the
   // shared DuckDB session). It works with a daemon even before a file is "loaded" — the
   // agent may have created tables, and the user can query the input file directly.
@@ -42,9 +46,9 @@ function WorkspaceInner() {
       { id: "overview", label: "Overview", icon: "◫", enabled: canvasReady },
       { id: "data", label: "Data", icon: "⌗", enabled: hasData },
       { id: "pipeline", label: "Pipeline", icon: "▸", enabled: hasStages },
-      { id: "leaderboard", label: "Leaderboard", icon: "★", enabled: !!state.artifacts["leaderboard"] },
+      { id: "leaderboard", label: "Leaderboard", icon: "★", enabled: !!leaderboard },
     ],
-    [canvasReady, hasData, hasStages, state.artifacts],
+    [canvasReady, hasData, hasStages, leaderboard, state.artifacts],
   );
 
   const [view, setView] = useState<CanvasView>("overview");
@@ -58,20 +62,40 @@ function WorkspaceInner() {
   };
   // Auto-reveal the most relevant view as the workflow progresses, without yanking the
   // user off a view they explicitly chose. Fires only when the COMPUTED target changes
-  // (new data/stage/leaderboard arrives) — not merely because userPicked flipped — so that
-  // Reset can return to Overview and stay there until real new data appears.
+  // (new stage progress / leaderboard / artifact arrives) — not merely because userPicked
+  // flipped — so Reset can return to Overview and stay there until real new data appears.
   const [userPicked, setUserPicked] = useState(false);
-  const autoTarget: CanvasView | null = state.artifacts["leaderboard"]
+  // The pipeline view is only worth revealing once a stage is actually running/done — the
+  // watcher seeds the whole timeline as `pending` up front, so gating on hasStages alone
+  // would latch on 'pipeline' and never advance to the leaderboard (audit #9).
+  const pipelineLive = state.stages.some((s) => s.status !== "pending");
+  const autoTarget: CanvasView | null = leaderboard
     ? "leaderboard"
-    : hasStages ? "pipeline" : hasDataset ? "data" : null;
+    : pipelineLive ? "pipeline"
+    : hasArtifacts ? "overview"   // a summarize-only turn produces an artifact but no stages
+    : hasDataset ? "data" : null;
+  // Re-arm auto-navigation on each new user turn (fresh run intent): clear the user-picked
+  // latch AND the last-target memo, so the next run's view reveals even if the user switched
+  // views earlier and even if the new run lands on the SAME view kind as the prior one
+  // (audit #12). Computed inline so the auto-reveal effect below sees the re-armed state.
+  const userTurnCount = state.turns.filter((t) => t.role === "user").length;
   const lastAutoTarget = useRef<CanvasView | null>(null);
+  const lastUserTurn = useRef(0);
+  if (userTurnCount !== lastUserTurn.current) {
+    lastUserTurn.current = userTurnCount;
+    lastAutoTarget.current = null; // re-arm target memo for the new turn
+  }
+  useEffect(() => {
+    if (userTurnCount > 0) setUserPicked(false);
+  }, [userTurnCount]);
+
   useEffect(() => {
     if (autoTarget && autoTarget !== lastAutoTarget.current) {
       lastAutoTarget.current = autoTarget;
       if (!userPicked) setView(autoTarget);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoTarget]);
+  }, [autoTarget, userTurnCount]);
 
   const welcome = (
     <ChatWelcome
@@ -152,7 +176,8 @@ function CanvasRegion({ view, injectedSql }: { view: CanvasView; injectedSql?: {
       );
     }
     case "leaderboard": {
-      const lb = state.artifacts["leaderboard"];
+      // Match by kind (the real daemon's ref is "candidates", not "leaderboard").
+      const lb = artifacts.find((a) => a.kind === "leaderboard");
       return <Canvas artifacts={lb ? [lb] : artifacts} />;
     }
     case "overview":

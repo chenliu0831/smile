@@ -110,7 +110,9 @@ export interface TableInfo {
 /** Lists the tables/views in the shared session with columns + lineage. */
 export async function fetchTables(httpBase: string): Promise<TableInfo[]> {
   const res = await fetch(`${httpBase}/tables`);
-  if (!res.ok) return [];
+  // Throw on a transient failure so callers can keep the prior list rather than wiping the
+  // rail to "no tables" (a non-ok here is a daemon hiccup, not an empty schema).
+  if (!res.ok) throw new SqlRunError(`/tables failed (${res.status})`, res.status);
   const body = await res.json().catch(() => null);
   return Array.isArray(body) ? body : [];
 }

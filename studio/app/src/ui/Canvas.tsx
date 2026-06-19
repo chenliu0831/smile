@@ -12,6 +12,19 @@ function ArtifactView({ artifact }: { artifact: Artifact }) {
   if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} />;
   if (artifact.kind === "report" && artifact.body) return <Markdown source={artifact.body} />;
   if (artifact.kind === "chart" && artifact.viz) return <Chart spec={artifact.viz} />;
+  // Image artifacts (summarize/EDA PNG charts) carry a base64 data: URI in body.
+  if (artifact.kind === "image" && artifact.body) {
+    return <img className="artifact-image" src={artifact.body} alt={artifact.title} />;
+  }
+  // file artifacts: surface the real path instead of a dead "No preview" tab.
+  if (artifact.kind === "file" && artifact.path) {
+    return (
+      <div className="artifact-file">
+        <div className="artifact-file-name">📄 {artifact.title}</div>
+        <div className="artifact-file-path">{artifact.path}</div>
+      </div>
+    );
+  }
   if (artifact.body) return <Markdown source={artifact.body} />;
   return <div className="canvas-empty">No preview for this artifact.</div>;
 }

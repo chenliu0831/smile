@@ -1,6 +1,8 @@
 /**
  * Minimal, dependency-free Markdown renderer for report artifacts — headings, bold,
- * inline code, and list items. Sufficient for the agent's `*_report.md` output in V0.
+ * inline code, list items, GFM tables, and fenced code blocks. The tables + code blocks
+ * matter for the agent's EDA/summary output: `describe()` stats and correlation matrices
+ * are emitted as GFM tables or aligned code, which previously degraded to flat paragraphs.
  */
 function renderInline(text: string): (string | JSX.Element)[] {
   const out: (string | JSX.Element)[] = [];
@@ -19,6 +21,15 @@ function renderInline(text: string): (string | JSX.Element)[] {
   return out;
 }
 
+/** A GFM table row: split on unescaped pipes, trimming the outer empties. */
+function splitRow(line: string): string[] {
+  const cells = line.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
+  return cells;
+}
+function isTableSeparator(line: string): boolean {
+  return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line);
+}
+
 export function Markdown({ source }: { source: string }) {
   const lines = source.split("\n");
   const blocks: JSX.Element[] = [];
@@ -34,7 +45,43 @@ export function Markdown({ source }: { source: string }) {
     }
   };
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Fenced code block: ``` … ``` — preserve alignment (describe()/corr matrices).
+    if (/^\s*```/.test(line)) {
+      flushList();
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) buf.push(lines[i++]);
+      blocks.push(<pre key={key++} className="md-code">{buf.join("\n")}</pre>);
+      continue;
+    }
+
+    // GFM table: a header row followed by a |---|---| separator.
+    if (line.includes("|") && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      flushList();
+      const header = splitRow(line);
+      i += 2; // skip header + separator
+      const rows: string[][] = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim() !== "") {
+        rows.push(splitRow(lines[i]));
+        i++;
+      }
+      i--; // the for-loop will i++ past the last consumed row
+      blocks.push(
+        <table key={key++} className="md-table">
+          <thead><tr>{header.map((h, hi) => <th key={hi}>{renderInline(h)}</th>)}</tr></thead>
+          <tbody>
+            {rows.map((r, ri) => (
+              <tr key={ri}>{r.map((c, ci) => <td key={ci}>{renderInline(c)}</td>)}</tr>
+            ))}
+          </tbody>
+        </table>,
+      );
+      continue;
+    }
+
     if (/^\s*[-*]\s+/.test(line)) {
       list.push(line.replace(/^\s*[-*]\s+/, ""));
       continue;

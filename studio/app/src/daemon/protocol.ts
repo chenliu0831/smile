@@ -44,7 +44,7 @@ export interface DataVizSpec {
   dataRef: ArrowRef;
 }
 
-export type ArtifactKind = "report" | "leaderboard" | "chart" | "dataframe" | "file";
+export type ArtifactKind = "report" | "leaderboard" | "chart" | "dataframe" | "file" | "image";
 
 export interface Artifact {
   /** Stable ref used by StageProgress.artifactRefs. */
@@ -52,7 +52,7 @@ export interface Artifact {
   kind: ArtifactKind;
   /** Display title, e.g. "EDA Report", "Leaderboard". */
   title: string;
-  /** For report/file: markdown or text body. */
+  /** For report/file: markdown or text body. For image: a data: URI (base64 PNG). */
   body?: string;
   /** For chart: the DataViz spec to render. */
   viz?: DataVizSpec;

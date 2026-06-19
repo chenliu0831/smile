@@ -220,7 +220,12 @@ public class AgentRunSource implements RunSource {
             // Replicate what Agent.stream does before delegating, then call complete()
             // directly so OUR handler (incl. onToolCallStatus) is what the SDK invokes.
             agent.conversation().params().setProperty(LLM.SYSTEM_PROMPT, agent.system());
-            llm.complete(userText, agent.conversation(), handler);
+            // Prepend the current data context (DuckDB tables + input/ files) so the agent
+            // knows what data exists WITHOUT the user loading a file or naming a path — and
+            // so a "Save as table" DuckDB table is visible to summarize/AutoML. Bounded and
+            // best-effort; empty when there's genuinely no data yet.
+            String prompt = DataContext.preamble(workingDir) + userText;
+            llm.complete(prompt, agent.conversation(), handler);
             // Wait for a terminal callback. On cancel/close, raise INTERRUPTED (consumed
             // at the SDK's next round boundary) but KEEP waiting so the turn is quiescent
             // before we return — preserving the one-turn-at-a-time invariant.

@@ -19,12 +19,14 @@ package smile.daemon;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 import smile.daemon.DaemonMessage.*;
 
 /**
@@ -62,6 +64,8 @@ public final class RunArtifactWatcher {
     private final Consumer<DaemonMessage> emit;
     private final Set<String> announcedStages = ConcurrentHashMap.newKeySet();
     private final Set<String> announcedArtifacts = ConcurrentHashMap.newKeySet();
+    /** Stage ids already announced as 'running' (so we emit each running transition once). */
+    private final Set<String> runningStage = ConcurrentHashMap.newKeySet();
     private volatile boolean started = false;
     private volatile boolean stopped = false;
     private Thread thread;
@@ -107,12 +111,14 @@ public final class RunArtifactWatcher {
 
     /** Emit progress/artifacts for any stage files that have newly appeared. */
     private void scanOnce() {
+        boolean anyDoneThisScan = false;
         for (StageSpec spec : STAGES) {
             if (announcedStages.contains(spec.stageId())) continue;
             Path file = workingDir.resolve(spec.relPath());
             if (!Files.isRegularFile(file)) continue;
 
             announcedStages.add(spec.stageId());
+            anyDoneThisScan = true;
             List<String> refs = spec.artifactKind() != null ? List.of(spec.stageId()) : List.of();
             emit.accept(new StageProgress(sessionId,
                 new Stage(spec.stageId(), spec.label(), StageStatus.done, refs, spec.relPath())));
@@ -120,6 +126,115 @@ public final class RunArtifactWatcher {
             if (spec.artifactKind() != null && announcedArtifacts.add(spec.stageId())) {
                 emit.accept(new ArtifactMsg(sessionId, buildArtifact(spec, file)));
             }
+        }
+        // Give the Timeline a live current-stage: once any stage has completed (so a real
+        // automl run is underway), mark the FIRST not-yet-done stage as running. Without
+        // this, stages jump pending->done and the pipeline never shows an in-progress step
+        // for the canvas to focus (audit #10). Re-announced only when it advances.
+        if (anyDoneThisScan && !announcedStages.isEmpty()) {
+            for (StageSpec spec : STAGES) {
+                if (!announcedStages.contains(spec.stageId())) {
+                    if (runningStage.add(spec.stageId())) {
+                        emit.accept(new StageProgress(sessionId,
+                            new Stage(spec.stageId(), spec.label(), StageStatus.running, List.of(), null)));
+                    }
+                    break;
+                }
+            }
+        }
+        scanFreeformArtifacts();
+    }
+
+    /**
+     * Surface artifacts produced OUTSIDE the automl pipeline contract — chiefly the
+     * {@code summarize}/EDA skill, which writes its charts as bare {@code *.png} into the
+     * working-dir ROOT (not {@code output/}) and its text summary to stdout / a markdown
+     * file. The automl-only STAGES table never watched these, so a "summarize my data" turn
+     * produced nothing on the canvas. We scan the cwd root for new {@code .png} (inlined as
+     * base64 image artifacts) and a {@code summary.md}/{@code eda_report.md} report so the
+     * canvas can render a rich EDA view without a full AutoML run.
+     */
+    private void scanFreeformArtifacts() {
+        // Markdown summary written directly into the cwd (the automl eda_report.md under
+        // output/ is handled by STAGES; this covers the summarize skill's own file).
+        for (String md : List.of("summary.md", "eda_report.md", "data_summary.md")) {
+            Path f = workingDir.resolve(md);
+            if (!Files.isRegularFile(f)) continue;
+            // mtime-stamped key so a regenerated summary re-emits; stable artifact ref so the
+            // canvas replaces the prior version in place.
+            String key = "freeform:" + md + ":" + mtimeOf(f);
+            if (announcedArtifacts.add(key)) {
+                emit.accept(new ArtifactMsg(sessionId,
+                    new Artifact("freeform:" + md, "report", "Data Summary",
+                        readBounded(f), null, null, f.toString())));
+            }
+        }
+        // PNG charts written to the cwd root by the summarize/EDA skills. Scoped to the
+        // skill's known chart names/prefixes so we don't inline unrelated images the agent
+        // may have opened/produced for other reasons.
+        try (Stream<Path> s = Files.list(workingDir)) {
+            s.filter(Files::isRegularFile)
+                .filter(p -> isSummaryChart(p.getFileName().toString()))
+                .sorted()
+                .forEach(p -> {
+                    // Stamp the dedupe key with the file's mtime so a SECOND summarize turn
+                    // that overwrites the same chart filename re-emits the new content
+                    // instead of being suppressed as already-announced.
+                    long mtime = mtimeOf(p);
+                    String ref = "img:" + p.getFileName() + ":" + mtime;
+                    if (announcedArtifacts.add(ref)) {
+                        String dataUri = readImageDataUri(p);
+                        if (dataUri != null) {
+                            // Stable artifact ref (no mtime) so the canvas replaces the prior
+                            // version in place rather than stacking a new tab each re-run.
+                            emit.accept(new ArtifactMsg(sessionId,
+                                new Artifact("img:" + p.getFileName(), "image",
+                                    chartTitle(p.getFileName().toString()),
+                                    dataUri, null, null, p.toString())));
+                        }
+                    }
+                });
+        } catch (IOException ignored) {
+            // cwd not listable this tick; try again next poll.
+        }
+    }
+
+    private static long mtimeOf(Path p) {
+        try {
+            return Files.getLastModifiedTime(p).toMillis();
+        } catch (IOException e) {
+            return 0L;
+        }
+    }
+
+    /** Whether a cwd PNG is one of the summarize/EDA skill's chart outputs (vs an unrelated
+     * image). Matches the skill's fixed names and its per-column cat_ / hist_ prefixes. */
+    private static boolean isSummaryChart(String fileName) {
+        String n = fileName.toLowerCase();
+        if (!n.endsWith(".png")) return false;
+        return n.startsWith("correlation") || n.startsWith("distribution")
+            || n.startsWith("categorical") || n.startsWith("time_series")
+            || n.startsWith("numeric") || n.startsWith("cat_") || n.startsWith("hist_")
+            || n.startsWith("box_") || n.startsWith("chart") || n.contains("heatmap");
+    }
+
+    /** A human title from a chart filename, e.g. "correlation_heatmap.png" -> "Correlation Heatmap". */
+    private static String chartTitle(String fileName) {
+        String stem = fileName.replaceFirst("\\.[^.]+$", "").replace('_', ' ').strip();
+        if (stem.isEmpty()) return fileName;
+        return Character.toUpperCase(stem.charAt(0)) + stem.substring(1);
+    }
+
+    /** Read a PNG as a {@code data:image/png;base64,…} URI, bounded so a huge image can't
+     * flood the socket. Returns null on error or if the file exceeds the cap. */
+    private static String readImageDataUri(Path file) {
+        try {
+            long size = Files.size(file);
+            if (size > 4_000_000) return null; // 4 MB cap; charts are far smaller
+            byte[] bytes = Files.readAllBytes(file);
+            return "data:image/png;base64," + Base64.getEncoder().encodeToString(bytes);
+        } catch (IOException e) {
+            return null;
         }
     }
 

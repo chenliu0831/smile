@@ -41,8 +41,17 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   // finally drains it so a refresh requested mid-run is never lost.
   const pendingRefreshRef = useRef(false);
 
-  const refreshTables = useCallback(() => {
-    if (httpBase) fetchTables(httpBase).then(setTables).catch(() => setTables([]));
+  // Refresh the schema rail. Awaitable so callers (save/run) can sequence the rail update.
+  // fetchTables THROWS on a transient daemon hiccup (the /tables call does N+1 serialized
+  // queries behind the shared SQL lock), so a successful fetch is authoritative — including
+  // an empty list (the user dropped the last table). Only a throw keeps the prior list.
+  const refreshTables = useCallback(async () => {
+    if (!httpBase) return;
+    try {
+      setTables(await fetchTables(httpBase));
+    } catch {
+      /* transient failure — keep the current list rather than wiping the rail */
+    }
   }, [httpBase]);
 
   /**
@@ -199,7 +208,9 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
           throw e;
         }
       }
-      refreshTables();
+      // Await the rail refresh so the just-saved table appears immediately (not racing the
+      // subsequent re-renders).
+      await refreshTables();
       // Show the saved table (becomes the tracked query so it auto-refreshes too).
       await runSelect(`SELECT * FROM "${name}"`, { silent: true });
       setSavedNotice(`Saved as “${name}”.`);

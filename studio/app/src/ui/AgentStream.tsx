@@ -66,6 +66,7 @@ function TurnView({ turn, onOpenSql }: { turn: ChatTurn; onOpenSql?: (sql: strin
       {turn.toolCalls.map((c) => <ToolCallCard key={c.id} call={c} onOpenSql={onOpenSql} />)}
       {turn.text && <div className="turn-text agent-text">{turn.text}</div>}
       {turn.status === "streaming" && !turn.text && <div className="turn-thinking">Thinking…</div>}
+      {turn.status === "failed" && <div className="turn-failed">⚠ This turn failed.</div>}
     </div>
   );
 }
