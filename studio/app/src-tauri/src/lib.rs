@@ -87,10 +87,16 @@ pub fn build_daemon_invocation(
         // CORS for the webview origins is baked into the daemon's application.properties
         // (it's a Quarkus build-time property, so runtime -D would have no effect).
         "-Dsmile.daemon.engine=agent".into(),
-        format!("-Dsmile.daemon.llm.provider={}", cfg.provider),
-        format!("-Dsmile.daemon.llm.model={}", cfg.model),
         format!("-Dsmile.home={smile_home}"),
     ];
+    // Only pass provider/model/baseUrl when set — an empty -D value overrides the
+    // daemon's own defaults with a blank string, which Quarkus rejects at startup.
+    if !cfg.provider.is_empty() {
+        args.push(format!("-Dsmile.daemon.llm.provider={}", cfg.provider));
+    }
+    if !cfg.model.is_empty() {
+        args.push(format!("-Dsmile.daemon.llm.model={}", cfg.model));
+    }
     if !cfg.base_url.is_empty() {
         args.push(format!("-Dsmile.daemon.llm.baseUrl={}", cfg.base_url));
     }
@@ -125,6 +131,16 @@ pub struct RunningDaemon {
     child: Child,
     port: u16,
     token: String,
+}
+
+/// Repo root, resolved from the crate's compile-time location (studio/app/src-tauri),
+/// so daemon paths don't depend on the process working directory.
+fn repo_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3) // src-tauri -> app -> studio -> repo root
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
 fn free_port() -> Result<u16, String> {
@@ -210,12 +226,22 @@ fn start_daemon(
     let credential = Entry::new(KEYRING_SERVICE, KEYRING_USER)
         .and_then(|e| e.get_password())
         .unwrap_or_default();
+    // No credential configured yet → don't spawn a doomed daemon; the Webview falls
+    // back to the mock and the user configures the LLM in Settings first.
+    if credential.is_empty() {
+        return Err("no LLM credential configured — open Settings to add one".into());
+    }
     let session_token = generate_session_token();
 
-    // Deployment paths: env-overridable, dev defaults relative to the repo.
-    let jar = std::env::var("SMILE_DAEMON_JAR")
-        .unwrap_or_else(|_| "../../serve/build/quarkus-app/quarkus-run.jar".into());
-    let smile_home = std::env::var("SMILE_HOME").unwrap_or_else(|_| "../..".into());
+    // Deployment paths: env-overridable. Defaults are resolved against the repo root
+    // (CARGO_MANIFEST_DIR = studio/app/src-tauri → up 3 = repo root), NOT the process
+    // cwd, since Tauri runs the binary from src-tauri/ where relative paths break.
+    let repo_root = repo_root();
+    let jar = std::env::var("SMILE_DAEMON_JAR").unwrap_or_else(|_| {
+        repo_root.join("serve/build/quarkus-app/quarkus-run.jar").to_string_lossy().into_owned()
+    });
+    let smile_home = std::env::var("SMILE_HOME")
+        .unwrap_or_else(|_| repo_root.to_string_lossy().into_owned());
 
     let port = free_port()?;
     let inv = build_daemon_invocation(&cfg, &credential, &session_token, &jar, &smile_home, port);
