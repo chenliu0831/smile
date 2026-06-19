@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "vitest";
-import { getLlmConfig, setLlmConfig } from "./llmConfig";
+import { getLlmConfig, setLlmConfig, PROVIDER_ENV_VAR } from "./llmConfig";
 
 beforeEach(() => localStorage.clear());
 
@@ -9,22 +9,20 @@ test("defaults to bedrock with no key when nothing is stored", async () => {
   expect(cfg.hasKey).toBe(false);
 });
 
-test("persists provider/baseUrl/model and reports hasKey once a key is set", async () => {
-  await setLlmConfig(
-    { provider: "bedrock", baseUrl: "https://bedrock/v1", model: "openai.gpt-oss-120b" },
-    "secret-token",
-  );
+test("persists provider/baseUrl/model (credential is env-sourced, not stored)", async () => {
+  await setLlmConfig({ provider: "bedrock", baseUrl: "https://bedrock/v1", model: "openai.gpt-oss-120b" });
   const cfg = await getLlmConfig();
   expect(cfg.provider).toBe("bedrock");
   expect(cfg.baseUrl).toBe("https://bedrock/v1");
   expect(cfg.model).toBe("openai.gpt-oss-120b");
-  expect(cfg.hasKey).toBe(true);
+  // In browser dev there is no env var visible, so hasKey is always false — the credential
+  // is never persisted by the app.
+  expect(cfg.hasKey).toBe(false);
 });
 
-test("saving with an empty key keeps the previously-stored key flag", async () => {
-  await setLlmConfig({ provider: "bedrock", baseUrl: "u", model: "m" }, "tok");
-  await setLlmConfig({ provider: "bedrock", baseUrl: "u2", model: "m2" }, "");
-  const cfg = await getLlmConfig();
-  expect(cfg.baseUrl).toBe("u2");
-  expect(cfg.hasKey).toBe(true);
+test("each provider maps to its credential environment variable", () => {
+  expect(PROVIDER_ENV_VAR.bedrock).toBe("AWS_BEARER_TOKEN_BEDROCK");
+  expect(PROVIDER_ENV_VAR.openai).toBe("OPENAI_API_KEY");
+  expect(PROVIDER_ENV_VAR.gemini).toBe("GOOGLE_API_KEY");
+  expect(PROVIDER_ENV_VAR.anthropic).toBe("ANTHROPIC_API_KEY");
 });

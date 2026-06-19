@@ -194,6 +194,9 @@ button {
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field > span { font-size: 12px; color: var(--text-dim); }
 .field .key-set { color: var(--good); font-style: normal; }
+.field .key-missing { color: var(--warn); font-style: normal; }
+.cred-status { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+.cred-status code { font-family: var(--mono); background: var(--bg); padding: 1px 5px; border-radius: 4px; color: var(--text); }
 .field input, .field select {
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: 7px; padding: 8px 10px; font-family: inherit; font-size: 13px;

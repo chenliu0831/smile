@@ -2,16 +2,20 @@
 //!
 //! The Shell owns the OS and supervises a single headless Smile Daemon sidecar
 //! (the evolved Quarkus `serve/` module). It:
-//!   - persists LLM config (provider / base URL / model) in a Tauri store and the
-//!     API key/token in the OS keychain (never returned to the Webview);
-//!   - spawns the daemon JVM configured from that saved config + token, on a free
-//!     loopback port, and reports readiness via `daemon_info` (ADR-0002);
+//!   - persists LLM config (provider / base URL / model) in a Tauri store;
+//!   - reads the LLM credential from the provider's environment variable (e.g.
+//!     `AWS_BEARER_TOKEN_BEDROCK`) — NOT the OS keychain. The keychain tied access to the
+//!     app's code signature, so `tauri dev` re-prompted "grant access" on every rebuild;
+//!     sourcing the token from the environment (the same var the daemon reads) removes that
+//!     friction and the token is never persisted by the app at all;
+//!   - spawns the daemon JVM configured from that saved config, on a free loopback port,
+//!     and reports readiness via `daemon_info` (ADR-0002). The spawned JVM inherits the
+//!     Shell's environment, so the credential reaches the daemon without being copied;
 //!   - the Webview then connects directly to the daemon's WebSocket.
 //!
 //! Deployment paths (daemon jar, `smile.home`, the agent working directory) come from
 //! env vars with dev-friendly defaults, since they are not user-facing settings.
 
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
 use std::process::{Child, Command};
@@ -23,8 +27,6 @@ use tauri_plugin_store::StoreExt;
 
 const STORE_FILE: &str = "settings.json";
 const CONFIG_KEY: &str = "llm";
-const KEYRING_SERVICE: &str = "dev.smile.studio";
-const KEYRING_USER: &str = "llm-api-key";
 
 /// PYTHONPATH entry separator: ':' on unix, ';' on Windows.
 #[cfg(windows)]
@@ -205,9 +207,10 @@ fn get_llm_config(app: tauri::AppHandle) -> Result<LlmConfig, String> {
         .get(CONFIG_KEY)
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    cfg.has_key = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .and_then(|e| e.get_password())
-        .is_ok();
+    // The credential is read from the provider's environment variable (e.g.
+    // AWS_BEARER_TOKEN_BEDROCK), not stored by the app. has_key reflects whether that var
+    // is set in the Shell's environment.
+    cfg.has_key = !credential_for(&cfg.provider).is_empty();
     Ok(cfg)
 }
 
@@ -217,24 +220,23 @@ fn set_llm_config(
     provider: String,
     base_url: String,
     model: String,
-    api_key: String,
 ) -> Result<(), String> {
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     let cfg = LlmConfig { provider, base_url, model, has_key: false };
     store.set(CONFIG_KEY, serde_json::to_value(&cfg).map_err(|e| e.to_string())?);
     store.save().map_err(|e| e.to_string())?;
-    if !api_key.is_empty() {
-        Entry::new(KEYRING_SERVICE, KEYRING_USER)
-            .map_err(|e| e.to_string())?
-            .set_password(&api_key)
-            .map_err(|e| e.to_string())?;
-    }
     Ok(())
 }
 
-/// Spawns the daemon JVM configured from the saved LLM config + keychain token, on a
-/// free loopback port, and waits until it is listening. The agent's working directory
-/// is `working_dir` (where `input/<dataset>.csv` lives). Returns the live connection info.
+/// The LLM credential for a provider, read from its environment variable (never persisted).
+fn credential_for(provider: &str) -> String {
+    std::env::var(token_env_var(provider)).unwrap_or_default()
+}
+
+/// Spawns the daemon JVM configured from the saved LLM config + the credential read from
+/// the provider's environment variable, on a free loopback port, and waits until it is
+/// listening. The agent's working directory is `working_dir` (where `input/<dataset>.csv`
+/// lives). Returns the live connection info.
 #[tauri::command]
 fn start_daemon(
     app: tauri::AppHandle,
@@ -249,13 +251,15 @@ fn start_daemon(
     }
 
     let cfg = get_llm_config(app)?;
-    let credential = Entry::new(KEYRING_SERVICE, KEYRING_USER)
-        .and_then(|e| e.get_password())
-        .unwrap_or_default();
-    // No credential configured yet → don't spawn a doomed daemon; the Webview falls
-    // back to the mock and the user configures the LLM in Settings first.
+    let credential = credential_for(&cfg.provider);
+    // No credential in the environment → don't spawn a doomed daemon; the Webview falls
+    // back to the mock. The user sets the provider's token env var (e.g.
+    // AWS_BEARER_TOKEN_BEDROCK in ~/.zshrc) and relaunches.
     if credential.is_empty() {
-        return Err("no LLM credential configured — open Settings to add one".into());
+        return Err(format!(
+            "no LLM credential found — set {} in your environment (e.g. ~/.zshrc) and relaunch",
+            token_env_var(&cfg.provider)
+        ));
     }
     let session_token = generate_session_token();
 

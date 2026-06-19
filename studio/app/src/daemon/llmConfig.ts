@@ -1,18 +1,27 @@
 /**
  * Typed client for the Shell's LLM-config commands (ADR-0001). The provider/base
- * URL/model live in the Tauri store; the API key/token lives in the OS keychain and
- * is never read back — the Webview only learns whether a key is present (`hasKey`).
+ * URL/model live in the Tauri store; the API key/token is read from the provider's
+ * environment variable (e.g. AWS_BEARER_TOKEN_BEDROCK) — NOT stored by the app — so the
+ * Webview only learns whether that env var is present (`hasKey`).
  *
  * Outside a Tauri window (plain browser dev) these fall back to localStorage so the
- * Settings dialog still functions, minus the keychain guarantee.
+ * Settings dialog still functions (config only; there is no credential in browser dev).
  */
 export interface LlmConfig {
   provider: "anthropic" | "openai" | "gemini" | "bedrock";
   baseUrl: string;
   model: string;
-  /** Whether a key/token is stored (the value is never returned to the Webview). */
+  /** Whether the provider's credential env var is set (value never reaches the Webview). */
   hasKey: boolean;
 }
+
+/** The environment variable each provider's credential is read from. */
+export const PROVIDER_ENV_VAR: Record<LlmConfig["provider"], string> = {
+  bedrock: "AWS_BEARER_TOKEN_BEDROCK",
+  openai: "OPENAI_API_KEY",
+  gemini: "GOOGLE_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+};
 
 export const PROVIDERS: { id: LlmConfig["provider"]; label: string; needsBaseUrl: boolean }[] = [
   { id: "anthropic", label: "Anthropic", needsBaseUrl: false },
@@ -49,7 +58,8 @@ export async function getLlmConfig(): Promise<LlmConfig> {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) {
       const c = JSON.parse(raw);
-      return { ...fallback, ...c, hasKey: !!c.apiKey || !!c.hasKey };
+      // Browser dev can't read the credential env var, so hasKey is always false here.
+      return { ...fallback, ...c, hasKey: false };
     }
   } catch {
     /* ignore */
@@ -57,25 +67,17 @@ export async function getLlmConfig(): Promise<LlmConfig> {
   return fallback;
 }
 
-export async function setLlmConfig(
-  cfg: Omit<LlmConfig, "hasKey">,
-  apiKey: string,
-): Promise<void> {
+export async function setLlmConfig(cfg: Omit<LlmConfig, "hasKey">): Promise<void> {
   if (inTauri()) {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("set_llm_config", {
       provider: cfg.provider,
       baseUrl: cfg.baseUrl,
       model: cfg.model,
-      apiKey,
     });
     return;
   }
-  // Browser fallback (dev only): persist config; mark hasKey if a key was entered.
-  const existing = localStorage.getItem(LS_KEY);
-  const prevHasKey = existing ? !!JSON.parse(existing).hasKey : false;
-  localStorage.setItem(
-    LS_KEY,
-    JSON.stringify({ ...cfg, hasKey: apiKey ? true : prevHasKey }),
-  );
+  // Browser fallback (dev only): persist config. The credential comes from the env var,
+  // which the browser can't see, so hasKey stays false here.
+  localStorage.setItem(LS_KEY, JSON.stringify({ ...cfg, hasKey: false }));
 }
