@@ -69,9 +69,10 @@ public class AgentRunSource implements RunSource {
         emit.accept(new SessionStarted(sessionId, greeting));
 
         Agent agent;
+        LLM llm;
         try {
             var spec = Agent.Spec.of("analyst");
-            LLM llm = llmFactory.get();
+            llm = llmFactory.get();
             agent = new Agent(spec, () -> llm, workingDir);
             // Clair's skills run Python, read/write files, and visualize data.
             agent.conversation().addTools(Tool.file());
@@ -96,22 +97,30 @@ public class AgentRunSource implements RunSource {
             if (next.isEmpty()) break; // session closed
             control.clearCancel();
             watcher.start(); // idempotent; begins seeding stages on the first real turn
-            streamTurn(agent, next.get(), emit, control);
+            streamTurn(agent, llm, next.get(), emit, control);
         }
         watcher.stop();
         LOG.debug("Chat session ended");
     }
 
     /**
-     * Stream a single user turn to completion. CRITICAL INVARIANT (verified against the
-     * SDK): {@code agent.stream} dispatches the LLM call on the SDK's own async thread
-     * and returns immediately; the handler's terminal callback ({@code onComplete}/
-     * {@code onException}) fires on that thread. This method must NOT return until that
-     * terminal callback has fired — otherwise the next turn's {@code agent.stream} would
-     * overlap this one on the shared mutable Conversation. Cancellation sets the
-     * round-boundary INTERRUPTED flag and then STILL waits for the terminal callback.
+     * Stream a single user turn to completion. We call {@code llm.complete(prompt,
+     * conversation, handler)} DIRECTLY rather than {@code agent.stream(...)}: the latter
+     * wraps our handler in an internal {@code Agent$1} that overrides only onNext/
+     * onComplete/onException/onStatus/onQuestion and drops {@code onToolCallStatus}
+     * (verified in bytecode) — so tool-call cards and the todo plan would never fire.
+     * Calling complete directly makes OUR handler the one the SDK invokes for every
+     * callback, while we replicate the one thing Agent.stream does first: seed the
+     * system prompt into the conversation params.
+     *
+     * CRITICAL INVARIANT (verified against the SDK): complete() dispatches the LLM call
+     * on the SDK's own async thread and returns immediately; the terminal callback
+     * (onComplete/onException) fires on that thread. This method must NOT return until
+     * that terminal callback has fired — otherwise the next turn would overlap this one
+     * on the shared mutable Conversation. Cancellation sets the round-boundary
+     * INTERRUPTED flag and then STILL waits for the terminal callback.
      */
-    private void streamTurn(Agent agent, String userText, Consumer<DaemonMessage> emit, RunControl control) {
+    private void streamTurn(Agent agent, LLM llm, String userText, Consumer<DaemonMessage> emit, RunControl control) {
         String turnId = "turn-" + seq.incrementAndGet();
         emit.accept(new TurnStarted(turnId, "agent"));
         var doneLatch = new CountDownLatch(1);
@@ -208,7 +217,10 @@ public class AgentRunSource implements RunSource {
 
         boolean interruptRequested = false;
         try {
-            agent.stream(userText, handler);
+            // Replicate what Agent.stream does before delegating, then call complete()
+            // directly so OUR handler (incl. onToolCallStatus) is what the SDK invokes.
+            agent.conversation().params().setProperty(LLM.SYSTEM_PROMPT, agent.system());
+            llm.complete(userText, agent.conversation(), handler);
             // Wait for a terminal callback. On cancel/close, raise INTERRUPTED (consumed
             // at the SDK's next round boundary) but KEEP waiting so the turn is quiescent
             // before we return — preserving the one-turn-at-a-time invariant.
