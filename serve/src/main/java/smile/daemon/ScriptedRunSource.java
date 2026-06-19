@@ -74,8 +74,9 @@ public class ScriptedRunSource implements RunSource {
 
         // Clarify gate — the skill "asks once" for the primary metric (ADR-0010).
         emit.accept(new AgentChunk(RUN_ID, "I'll build a churn classifier. Before I start, one quick question.\n"));
-        Question q = new Question("q-metric", "What is the primary metric to optimize?",
-                List.of("AUC (recommended)", "F1", "Accuracy"));
+        Question q = new Question("q-metric", "Confirm the primary metric",
+                "What is the primary metric to optimize?",
+                List.of("AUC (recommended)", "F1", "Accuracy"), false);
         emit.accept(new GateOpened(RUN_ID, new Gate("g-metric", "clarify", "Confirm the primary metric", q)));
         boolean answered = control.awaitGate("g-metric").isPresent();
         emit.accept(new GateClosed(RUN_ID, "g-metric"));

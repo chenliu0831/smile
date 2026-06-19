@@ -51,8 +51,11 @@ public sealed interface DaemonMessage {
     record ToolCall(String id, String title, String kind, String status,
                     String code, String output, String score) {}
 
+    /** One item in the agent's live task plan (refinement R1). */
+    record Todo(String content, String status, String activeForm) {}
+
     /** A human-in-the-loop question (the Clarify gate). */
-    record Question(String id, String prompt, List<String> options) {}
+    record Question(String id, String header, String prompt, List<String> options, boolean multiSelect) {}
 
     /** A blocking gate (clarify | approval | plan). */
     record Gate(String id, String kind, String prompt, Question question) {}
@@ -80,6 +83,11 @@ public sealed interface DaemonMessage {
 
     record TurnFinished(String turnId, String status, long outputTokens) implements DaemonMessage {
         public String type() { return "turn-finished"; }
+    }
+
+    /** The agent's current task plan (full snapshot; replaces the prior list). */
+    record TodoList(String runId, List<Todo> todos) implements DaemonMessage {
+        public String type() { return "todo-list"; }
     }
 
     record RunStarted(String runId, String goal, List<Stage> stages) implements DaemonMessage {

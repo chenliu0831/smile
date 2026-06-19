@@ -334,3 +334,44 @@ button {
 .explorer-hint em { color: var(--accent); font-style: normal; }
 .explorer-grid { flex: 1; min-height: 0; }
 .explorer-grid perspective-viewer { height: 100%; }
+
+/* ---- Live todo checklist (R1) ---- */
+.todo-panel {
+  margin: 8px 12px 0; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-elev-2); overflow: hidden;
+}
+.todo-panel > summary {
+  list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+  padding: 7px 12px; font-size: 12px;
+}
+.todo-panel > summary::-webkit-details-marker { display: none; }
+.todo-title { text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-dim); font-weight: 600; }
+.todo-count { margin-left: auto; font-family: var(--mono); color: var(--text-dim); }
+.todo-list { list-style: none; margin: 0; padding: 4px 12px 10px; }
+.todo-row { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; font-size: 13px; }
+.todo-row.completed .todo-text { color: var(--text-dim); text-decoration: line-through; }
+.todo-row.in_progress .todo-text { color: var(--text); }
+.todo-row.pending .todo-text { color: var(--text-dim); }
+.todo-mark { width: 14px; height: 14px; flex-shrink: 0; margin-top: 2px; border-radius: 50%; text-align: center; line-height: 14px; font-size: 10px; }
+.todo-mark.done { background: var(--good); color: #04140a; }
+.todo-mark.active { color: var(--running); animation: pulse 1.2s ease-in-out infinite; }
+.todo-mark.pending { border: 1.5px solid var(--border); }
+
+/* ---- Tool-kind icons (R2) ---- */
+.tc-kind { display: inline-flex; align-items: center; gap: 5px; }
+.tc-icon { font-family: var(--mono); opacity: 0.85; }
+.tc-kind.kind-shell { color: var(--accent); border-color: var(--accent); }
+.tc-kind.kind-read { color: #9aa7ff; }
+.tc-kind.kind-write { color: var(--warn); }
+.tc-kind.kind-dataviz { color: var(--good); }
+.tc-kind.kind-skill { color: #c792ea; }
+.tc-fail { color: var(--bad); font-size: 11px; }
+
+/* ---- Multi-select gate (R3) ---- */
+.gate-multi { display: flex; flex-direction: column; gap: 6px; }
+.gate-check {
+  display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 6px 10px;
+  border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+}
+.gate-check.on { border-color: var(--accent); background: var(--accent-soft); }
+.gate-check input { accent-color: var(--accent); }

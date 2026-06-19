@@ -1,4 +1,4 @@
-import type { Artifact, ChatTurn, DaemonMessage, Gate, StageProgress } from "./protocol";
+import type { Artifact, ChatTurn, DaemonMessage, Gate, StageProgress, Todo } from "./protocol";
 
 /**
  * Session state for the interactive agent (ADR-0006). The conversation is an ordered
@@ -17,6 +17,8 @@ export interface RunState {
   stages: StageProgress[];
   artifacts: Record<string, Artifact>;
   openGates: Gate[];
+  /** The agent's current task plan (R1); full snapshot, replaced on each todo-list. */
+  todos: Todo[];
 }
 
 export const initialRunState: RunState = {
@@ -28,6 +30,7 @@ export const initialRunState: RunState = {
   stages: [],
   artifacts: {},
   openGates: [],
+  todos: [],
 };
 
 let turnSeq = 0;
@@ -126,6 +129,10 @@ export function reduceRun(state: RunState, msg: DaemonMessage): RunState {
           ? state.stages.map((x) => (x.stageId === msg.stage.stageId ? msg.stage : x))
           : [...state.stages, msg.stage],
       };
+
+    case "todo-list":
+      // Full snapshot each time — replace, don't merge.
+      return { ...state, todos: msg.todos };
 
     case "artifact":
       return { ...state, artifacts: { ...state.artifacts, [msg.artifact.ref]: msg.artifact } };

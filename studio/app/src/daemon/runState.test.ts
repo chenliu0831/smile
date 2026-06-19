@@ -112,6 +112,27 @@ test("turn-finished targets the turn by id and only clears streaming for the act
   expect(s2.streaming).toBe(false);
 });
 
+test("todo-list replaces the task plan with the latest full snapshot", () => {
+  let s = reduceRun(initialRunState, {
+    type: "todo-list",
+    runId: "r",
+    todos: [
+      { content: "Load data", status: "completed", activeForm: "Loading data" },
+      { content: "Train models", status: "in_progress", activeForm: "Training models" },
+    ],
+  });
+  expect(s.todos).toHaveLength(2);
+  expect(s.todos[1].status).toBe("in_progress");
+  // A later snapshot fully replaces the prior list (TodoWrite re-sends all todos).
+  s = reduceRun(s, {
+    type: "todo-list",
+    runId: "r",
+    todos: [{ content: "Train models", status: "completed", activeForm: "Training models" }],
+  });
+  expect(s.todos).toHaveLength(1);
+  expect(s.todos[0].status).toBe("completed");
+});
+
 test("run-finished marks any streaming turn done and sets terminal status", () => {
   let s = reduceRun(initialRunState, { type: "agent-chunk", runId: "r", text: "x" });
   s = reduceRun(s, { type: "run-finished", runId: "r", status: "completed" });

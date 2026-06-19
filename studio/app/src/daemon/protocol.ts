@@ -81,9 +81,22 @@ export interface ToolCall {
 /** A blocking human-in-the-loop question — the Clarify gate (ADR-0010). */
 export interface Question {
   id: string;
+  /** Short label for the question (e.g. "Primary metric"); the agent's Question.header. */
+  header?: string;
   prompt: string;
   /** When present, render as choices; otherwise a free-text answer. */
   options?: string[];
+  /** When true, the user may pick multiple options (checkbox set + Submit). */
+  multiSelect?: boolean;
+}
+
+/** One item in the agent's live task plan (R1). */
+export interface Todo {
+  content: string;
+  /** "pending" | "in_progress" | "completed" (agent-defined). */
+  status: string;
+  /** Present-continuous form shown while in progress, e.g. "Training models". */
+  activeForm: string;
 }
 
 /** Tiers of human gate (ADR-0010). */
@@ -124,6 +137,7 @@ export type DaemonMessage =
   | { type: "stage-progress"; runId: string; stage: StageProgress }
   | { type: "agent-chunk"; runId: string; text: string }
   | { type: "tool-call"; runId: string; call: ToolCall }
+  | { type: "todo-list"; runId: string; todos: Todo[] }
   | { type: "artifact"; runId: string; artifact: Artifact }
   | { type: "gate-opened"; runId: string; gate: Gate }
   | { type: "gate-closed"; runId: string; gateId: string }

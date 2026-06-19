@@ -37,6 +37,7 @@ export function RunZones() {
       <Canvas artifacts={visibleArtifacts} />
       <AgentStream
         turns={state.turns}
+        todos={state.todos}
         openGates={state.openGates}
         streaming={state.streaming}
         onSend={sendMessage}

@@ -5,15 +5,30 @@
  * a Cursor/Claude-Code-style prompting experience.
  */
 import { useEffect, useRef, useState } from "react";
-import type { ChatTurn, Gate, ToolCall } from "../daemon/protocol";
+import type { ChatTurn, Gate, Todo, ToolCall } from "../daemon/protocol";
+import { TodoChecklist } from "./TodoChecklist";
+
+/** Glyph per tool kind (R2), so cards are scannable at a glance. */
+const KIND_ICON: Record<string, string> = {
+  shell: "❯_",
+  read: "▤",
+  write: "✎",
+  dataviz: "▦",
+  skill: "✦",
+  script: "λ",
+};
 
 function ToolCallCard({ call }: { call: ToolCall }) {
   return (
     <details className="toolcall">
       <summary>
-        <span className="tc-kind">{call.kind}</span>
+        <span className={`tc-kind kind-${call.kind}`}>
+          <span className="tc-icon">{KIND_ICON[call.kind] ?? "λ"}</span>
+          {call.kind}
+        </span>
         <span className="tc-title">{call.title}</span>
         {call.status === "running" && <span className="tc-spin">●</span>}
+        {call.status === "failed" && <span className="tc-fail">failed</span>}
         {call.score && <span className="tc-score">{call.score}</span>}
       </summary>
       <div className="tc-body">
@@ -53,16 +68,46 @@ function GateCard({
   onApprove: (id: string) => void;
 }) {
   const [text, setText] = useState("");
+  const [picked, setPicked] = useState<Set<string>>(new Set());
   const options = gate.question?.options;
   const isClarify = gate.kind === "clarify";
+  const multi = !!gate.question?.multiSelect;
+  // R3: show the agent's question header (e.g. "Primary metric") when present.
+  const label = gate.question?.header
+    ? gate.question.header
+    : isClarify ? "Needs your input" : gate.kind === "approval" ? "Approval needed" : "Plan";
+
+  function toggle(opt: string) {
+    setPicked((prev) => {
+      const next = new Set(prev);
+      next.has(opt) ? next.delete(opt) : next.add(opt);
+      return next;
+    });
+  }
+
   return (
     <div className="gate">
-      <div className="gate-kind">
-        {isClarify ? "Needs your input" : gate.kind === "approval" ? "Approval needed" : "Plan"}
-      </div>
+      <div className="gate-kind">{label}</div>
       <div className="gate-prompt">{gate.question?.prompt ?? gate.prompt}</div>
       <div className="gate-options">
-        {isClarify && options && options.length > 0 ? (
+        {isClarify && options && options.length > 0 && multi ? (
+          // R3 multi-select: checkboxes + Submit; aggregate picks into one answer.
+          <div className="gate-multi">
+            {options.map((opt) => (
+              <label key={opt} className={`gate-check ${picked.has(opt) ? "on" : ""}`}>
+                <input type="checkbox" checked={picked.has(opt)} onChange={() => toggle(opt)} />
+                {opt}
+              </label>
+            ))}
+            <button
+              className="primary"
+              disabled={picked.size === 0}
+              onClick={() => onResolve(gate.id, [...picked].join(", "))}
+            >
+              Submit
+            </button>
+          </div>
+        ) : isClarify && options && options.length > 0 ? (
           options.map((opt, i) => (
             <button key={opt} className={i === 0 ? "primary" : ""} onClick={() => onResolve(gate.id, opt)}>
               {opt}
@@ -94,6 +139,7 @@ function GateCard({
 
 export function AgentStream({
   turns,
+  todos,
   openGates,
   streaming,
   onSend,
@@ -102,6 +148,7 @@ export function AgentStream({
   onCancel,
 }: {
   turns: ChatTurn[];
+  todos: Todo[];
   openGates: Gate[];
   streaming: boolean;
   onSend: (text: string) => void;
@@ -130,6 +177,7 @@ export function AgentStream({
   return (
     <div className="zone stream">
       <div className="zone-title">Agent · Clair</div>
+      <TodoChecklist todos={todos} />
       <div className="stream-body" ref={bodyRef}>
         {turns.length === 0 && (
           <div className="stream-empty">Ask Clair to analyze a dataset to begin.</div>

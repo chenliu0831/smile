@@ -137,19 +137,34 @@ public class AgentRunSource implements RunSource {
 
             @Override
             public void onToolCallStatus(ioa.llm.tool.Tool tool, ioa.llm.tool.Tool.Result result) {
+                // R1: TodoWrite carries the agent's task plan — surface it as a live
+                // checklist (a TodoList message), not a noisy generic tool-call card.
+                if (tool instanceof ioa.llm.tool.TodoWrite tw && tw.todos != null) {
+                    var todos = tw.todos.stream()
+                            .map(t -> new Todo(t.content, t.status, t.activeForm))
+                            .toList();
+                    emit.accept(new TodoList(sessionId, todos));
+                    return;
+                }
+                // R2: present the tool with a real kind + input preview, not kind="script".
+                ToolPresenter.Card card = ToolPresenter.present(tool);
                 String id = "tc-" + seq.incrementAndGet();
                 boolean done = result != null;
                 String status = done ? (result.success() ? "done" : "failed") : "running";
-                String title = done && result.command() != null ? result.command()
-                        : tool.getClass().getSimpleName();
+                // Prefer the result's command for the title once complete, else the card title.
+                String title = done && result.command() != null && !result.command().isBlank()
+                        ? result.command() : card.title();
                 String output = done ? result.output() : null;
-                emit.accept(new ToolCallMsg(sessionId, new ToolCall(id, title, "script", status, null, output, null)));
+                emit.accept(new ToolCallMsg(sessionId,
+                        new ToolCall(id, title, card.kind(), status, card.code(), output, null)));
             }
 
             @Override
             public void onQuestion(Question question) {
                 String gateId = "g-" + seq.incrementAndGet();
-                var protoQ = new DaemonMessage.Question(gateId, question.question, question.choices);
+                String qHeader = question.header != null ? question.header : "";
+                var protoQ = new DaemonMessage.Question(
+                        gateId, qHeader, question.question, question.choices, question.multiSelect);
                 String header = question.header != null ? question.header : "Needs your input";
                 // A choice-less question with an "approval"-style header (e.g. the SDK's
                 // tool-call-limit gate, which expects exactly "Yes") is an APPROVAL gate;
