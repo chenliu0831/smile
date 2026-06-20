@@ -1,0 +1,14 @@
+{
+  "request": {
+    "sql": "CREATE TABLE titanic AS SELECT * FROM read_csv('input/titanic.csv', header=true)"
+  },
+  "status": 200,
+  "body": {
+    "kind": "ddl",
+    "ok": true,
+    "rowsAffected": null,
+    "tables": [
+      "titanic"
+    ]
+  }
+}

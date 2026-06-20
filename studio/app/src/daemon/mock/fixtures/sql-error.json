@@ -1,0 +1,9 @@
+{
+  "request": {
+    "sql": "SELECT * FROM no_such_table_xyz"
+  },
+  "status": 400,
+  "body": {
+    "error": "Catalog Error: Table with name no_such_table_xyz does not exist!\nDid you mean \"pg_tables\"?\n\nLINE 3: SELECT * FROM no_such_table_xyz\n                      ^"
+  }
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "name": "titanic",
+    "columns": [
+      {
+        "name": "PassengerId",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Survived",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Pclass",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Name",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Sex",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Age",
+        "type": "DOUBLE"
+      },
+      {
+        "name": "SibSp",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Parch",
+        "type": "BIGINT"
+      },
+      {
+        "name": "Ticket",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Fare",
+        "type": "DOUBLE"
+      },
+      {
+        "name": "Cabin",
+        "type": "VARCHAR"
+      },
+      {
+        "name": "Embarked",
+        "type": "VARCHAR"
+      }
+    ],
+    "definition": "SELECT * FROM read_csv('input/titanic.csv', header=true)"
+  }
+]

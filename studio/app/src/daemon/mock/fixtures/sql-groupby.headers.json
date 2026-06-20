@@ -1,0 +1,13 @@
+{
+  "request": {
+    "sql": "SELECT Pclass, COUNT(*) AS n, ROUND(AVG(Fare),2) AS avg_fare, ROUND(AVG(Age),1) AS avg_age FROM titanic GROUP BY Pclass ORDER BY Pclass"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/vnd.apache.arrow.stream",
+    "x-smile-rows": "3",
+    "x-smile-cols": "4",
+    "x-smile-elapsed-ms": "0",
+    "x-smile-truncated": "false"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "request": {
+    "sql": "SELECT PassengerId, Name, Age, Fare FROM titanic WHERE Age IS NOT NULL ORDER BY Fare DESC LIMIT 25"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/vnd.apache.arrow.stream",
+    "x-smile-rows": "25",
+    "x-smile-cols": "4",
+    "x-smile-elapsed-ms": "0",
+    "x-smile-truncated": "false"
+  }
+}

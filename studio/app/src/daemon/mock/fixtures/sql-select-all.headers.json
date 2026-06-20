@@ -1,0 +1,13 @@
+{
+  "request": {
+    "sql": "SELECT * FROM titanic LIMIT 100"
+  },
+  "status": 200,
+  "headers": {
+    "content-type": "application/vnd.apache.arrow.stream",
+    "x-smile-rows": "100",
+    "x-smile-cols": "12",
+    "x-smile-elapsed-ms": "1",
+    "x-smile-truncated": "false"
+  }
+}
