@@ -240,6 +240,48 @@ public final class SharedSql {
         }
     }
 
+    /**
+     * Returns a bounded, column-oriented projection of a table for charting: column name ->
+     * list of values (numbers preserved as Number, everything else as String for JSON
+     * safety). {@code cols} is the table's columns (from {@link #describe}); {@code rows}
+     * bounds the row count.
+     */
+    public static java.util.Map<String, List<Object>> columnTable(
+            String table, List<Column> cols, int rows) throws ToolException {
+        if (table == null || !table.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+            throw new ToolException("Invalid table name: " + table);
+        }
+        // Bound columns too (not just rows): a very wide table inlined as JSON would bloat
+        // the payload/memory. Charts use a handful of columns; 64 is generous.
+        int maxCols = 64;
+        List<Column> capped = cols.size() > maxCols ? cols.subList(0, maxCols) : cols;
+        try {
+            Handles h = handles();
+            Object df = h.query.invoke(h.sql, "SELECT * FROM \"" + table + "\" LIMIT " + Math.max(0, rows));
+            int n = (int) h.dfNrow.invoke(df);
+            var out = new java.util.LinkedHashMap<String, List<Object>>();
+            for (Column c : capped) {
+                Object vec;
+                try {
+                    vec = h.dfColumnByName.invoke(df, c.name());
+                } catch (Exception missing) {
+                    continue; // column not in the projection (shouldn't happen for SELECT *)
+                }
+                List<Object> values = new ArrayList<>(n);
+                for (int i = 0; i < n; i++) {
+                    Object v = h.vecGet.invoke(vec, i);
+                    values.add(v instanceof Number ? v : (v == null ? null : String.valueOf(v)));
+                }
+                out.put(c.name(), values);
+            }
+            return out;
+        } catch (InvocationTargetException e) {
+            throw toToolException(e, "SQL columnTable failed");
+        } catch (ReflectiveOperationException e) {
+            throw toToolException(e, "SQL bridge unavailable");
+        }
+    }
+
     /** Extracts a named String column from a DataFrame reflectively. */
     private static List<String> columnAsStrings(Handles h, Object df, String colName)
             throws ReflectiveOperationException {

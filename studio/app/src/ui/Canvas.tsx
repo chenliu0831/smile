@@ -7,6 +7,7 @@ import type { Artifact } from "../daemon/protocol";
 import { Markdown } from "./Markdown";
 import { Leaderboard } from "./Leaderboard";
 import { Chart } from "./Chart";
+import { ErrorBoundary } from "./ErrorBoundary";
 
 function ArtifactView({ artifact }: { artifact: Artifact }) {
   if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} />;
@@ -57,7 +58,11 @@ export function Canvas({ artifacts }: { artifacts: Artifact[] }) {
               </button>
             ))}
           </div>
-          {active && <ArtifactView artifact={active} />}
+          {active && (
+            <ErrorBoundary label={`“${active.title}”`} resetKey={active.ref}>
+              <ArtifactView artifact={active} />
+            </ErrorBoundary>
+          )}
         </>
       )}
     </div>

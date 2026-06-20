@@ -33,8 +33,8 @@ export function Leaderboard({ markdown }: { markdown: string }) {
             <tr key={r.name} className={i === 0 ? "best" : ""}>
               <td className="rank">{i === 0 ? <span className="medal">★</span> : i + 1}</td>
               <td>{r.name}</td>
-              <td className="score">{r.score.toFixed(3)}</td>
-              <td className="score">{r.std?.toFixed(3) ?? "—"}</td>
+              <td className="score">{Number.isFinite(r.score) ? r.score.toFixed(3) : "—"}</td>
+              <td className="score">{Number.isFinite(r.std as number) ? (r.std as number).toFixed(3) : "—"}</td>
               <td style={{ color: "var(--text-dim)" }}>{r.params ?? "—"}</td>
               <td className="score">{r.runtimeSec != null ? `${r.runtimeSec}s` : "—"}</td>
               <td style={{ color: "var(--text-dim)" }}>{r.notes ?? ""}</td>

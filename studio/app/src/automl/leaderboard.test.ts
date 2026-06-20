@@ -19,6 +19,25 @@ test("parses each table row into a candidate with name and validation score", ()
   expect(lgbm?.notes).toBe("gradient boosting");
 });
 
+test("tolerates malformed agent output without throwing (crash-safety)", () => {
+  // Empty cells, non-numeric scores, ragged rows, a bare pipe — must not throw and must
+  // skip the junk rows (this class of input previously crashed the app via .toFixed).
+  const messy = `
+| Candidate | Val Score | Std |
+|---|---|---|
+|
+| good_model | 0.91 | 0.01 |
+| bad_score | N/A | — |
+| missing_cols |
+| ragged | 0.77 |
+`;
+  const board = parseLeaderboard(messy, { metric: "AUC", higherIsBetter: true });
+  expect(board.rows.map((r) => r.name)).toEqual(["good_model", "ragged"]);
+  expect(board.rows.every((r) => Number.isFinite(r.score))).toBe(true);
+  // ragged row had no std cell → undefined (renders as "—", never .toFixed on NaN)
+  expect(board.rows.find((r) => r.name === "ragged")?.std).toBeUndefined();
+});
+
 test("maps problem type to its default ranking metric (ADR-0004)", () => {
   expect(defaultMetric("binary")).toEqual({ metric: "AUC", higherIsBetter: true });
   expect(defaultMetric("multiclass")).toEqual({

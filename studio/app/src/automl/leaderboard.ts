@@ -55,17 +55,20 @@ export function parseLeaderboard(markdown: string, spec: MetricSpec): Leaderboar
   for (const line of lines) {
     if (!line.startsWith("|")) continue;
     const cells = splitRow(line);
+    if (cells.length < 2 || !cells[0]) continue;            // malformed/empty row
     // Skip the header row and the |---|---| separator.
     if (cells[0].toLowerCase() === "candidate") continue;
     if (cells.every((c) => /^:?-+:?$/.test(c))) continue;
     const score = Number(cells[1]);
-    if (Number.isNaN(score)) continue;
+    if (!Number.isFinite(score)) continue;                  // non-numeric / empty score cell
+    const std = cells[2] ? Number(cells[2]) : undefined;
+    const runtimeSec = cells[4] ? Number(cells[4]) : undefined;
     rows.push({
       name: cells[0],
       score,
-      std: cells[2] ? Number(cells[2]) : undefined,
+      std: Number.isFinite(std as number) ? std : undefined,
       params: cells[3] || undefined,
-      runtimeSec: cells[4] ? Number(cells[4]) : undefined,
+      runtimeSec: Number.isFinite(runtimeSec as number) ? runtimeSec : undefined,
       notes: cells[5] || undefined,
     });
   }

@@ -1,10 +1,14 @@
 /**
- * Renders a DataViz call (a chart spec, ADR-0007) natively with ECharts. Pulls the
- * backing table from the mock data source (stands in for a decoded Arrow frame).
+ * Renders a DataViz call (a chart spec, ADR-0007) natively with ECharts. Fetches the
+ * backing table from the daemon's /data/{ref} endpoint (which resolves a shared-session
+ * DuckDB table, or a built-in demo table), and falls back to the in-process mock in
+ * browser-dev (no daemon).
  */
+import { useEffect, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import type { DataVizSpec } from "../daemon/protocol";
-import { mockTable } from "../daemon/mock/mockData";
+import { useRunContext } from "../automl/RunContext";
+import { mockTable, type ColumnTable } from "../daemon/mock/mockData";
 
 const AXIS = { axisLine: { lineStyle: { color: "#2a3340" } }, axisLabel: { color: "#8b98a8" } };
 const BASE = {
@@ -14,8 +18,7 @@ const BASE = {
   title: { left: "center", textStyle: { color: "#e6edf3", fontSize: 13 } },
 };
 
-function buildOption(spec: DataVizSpec): Record<string, unknown> {
-  const t = mockTable(spec.dataRef.ref);
+function buildOption(spec: DataVizSpec, t: ColumnTable | undefined): Record<string, unknown> {
   const e = spec.encodings;
   if (!t) return { ...BASE, title: { ...BASE.title, text: spec.title ?? "" } };
 
@@ -78,9 +81,31 @@ function buildOption(spec: DataVizSpec): Record<string, unknown> {
 }
 
 export function Chart({ spec }: { spec: DataVizSpec }) {
+  const { httpBase } = useRunContext();
+  const [table, setTable] = useState<ColumnTable | undefined>(() => mockTable(spec.dataRef.ref));
+
+  // Prefer real daemon data; fall back to the mock (browser-dev / demo refs).
+  useEffect(() => {
+    let cancelled = false;
+    if (!httpBase) {
+      setTable(mockTable(spec.dataRef.ref));
+      return;
+    }
+    fetch(`${httpBase}/data/${encodeURIComponent(spec.dataRef.ref)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (cancelled) return;
+        setTable(json ?? mockTable(spec.dataRef.ref));
+      })
+      .catch(() => {
+        if (!cancelled) setTable(mockTable(spec.dataRef.ref));
+      });
+    return () => { cancelled = true; };
+  }, [httpBase, spec.dataRef.ref]);
+
   return (
     <ReactECharts
-      option={buildOption(spec)}
+      option={buildOption(spec, table)}
       style={{ height: 320, width: "100%" }}
       notMerge
       theme="dark"

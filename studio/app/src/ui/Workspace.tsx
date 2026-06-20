@@ -15,6 +15,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { RunProvider, useRunContext } from "../automl/RunContext";
 import { Topbar } from "./Topbar";
 import { AgentStream } from "./AgentStream";
+import { ErrorBoundary } from "./ErrorBoundary";
 import { ChatWelcome } from "./ChatWelcome";
 import { ViewRail, type CanvasView, type ViewDef } from "./ViewRail";
 import { Timeline } from "./Timeline";
@@ -125,21 +126,30 @@ function WorkspaceInner() {
         )}
         {canvasOpen && (
           <div className="canvas-host">
-            <CanvasRegion view={view} injectedSql={injectedSql} />
+            {/* A throw while rendering an artifact (bad report/table/chart) must NOT unmount
+                the app and kill the agent WebSocket — contain it to the canvas. Keyed on
+                view so switching views clears a stuck error. */}
+            <ErrorBoundary label="this view" resetKey={view}>
+              <CanvasRegion view={view} injectedSql={injectedSql} />
+            </ErrorBoundary>
           </div>
         )}
-        <AgentStream
-          turns={state.turns}
-          todos={state.todos}
-          openGates={state.openGates}
-          streaming={state.streaming}
-          welcome={welcome}
-          onSend={c.sendMessage}
-          onResolveGate={c.resolveGate}
-          onApproveGate={c.approveGate}
-          onCancel={c.cancel}
-          onOpenSql={openSql}
-        />
+        {/* The chat is the agent's lifeline (its WS lives in useRun); guard it too so a
+            bad turn/tool-call render can't take the whole app — and the socket — down. */}
+        <ErrorBoundary label="the chat">
+          <AgentStream
+            turns={state.turns}
+            todos={state.todos}
+            openGates={state.openGates}
+            streaming={state.streaming}
+            welcome={welcome}
+            onSend={c.sendMessage}
+            onResolveGate={c.resolveGate}
+            onApproveGate={c.approveGate}
+            onCancel={c.cancel}
+            onOpenSql={openSql}
+          />
+        </ErrorBoundary>
       </div>
     </div>
   );

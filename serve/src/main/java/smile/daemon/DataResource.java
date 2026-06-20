@@ -23,23 +23,31 @@ import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
+import ioa.llm.tool.SharedSql;
 
 /**
- * Serves the backing data for chart/grid {@code ArrowRef}s emitted by a run
- * (ADR-0002). For V0 this returns column-oriented JSON tables (the shape the
- * frontend chart adapter consumes); the production path replaces the body with
- * binary Apache Arrow IPC frames behind the same {@code ref} addressing.
+ * Serves the backing data for chart {@code ArrowRef}s as column-oriented JSON (the shape the
+ * frontend ECharts adapter consumes).
  *
- * <p>Endpoint: {@code GET /api/v1/data/{ref}}.
+ * <p>A {@code ref} that names a table in the shared DuckDB session returns that table's
+ * columns (bounded), so a chart can be backed by REAL data — a table the user saved or the
+ * agent created. Otherwise it falls back to the small built-in demo tables
+ * ({@code arrow-roc}/{@code arrow-shap}) used by the scripted/browser-dev run.
+ *
+ * <p>Endpoint: {@code GET /api/v1/data/{ref}?rows=N}.
  *
  * @author Haifeng Li
  */
 @Path("/data")
 public class DataResource {
+    private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(DataResource.class);
+    private static final int DEFAULT_ROWS = 5_000;
+    private static final int MAX_ROWS = 50_000;
 
-    /** Column-oriented tables keyed by ArrowRef id (stands in for Arrow frames). */
-    private static final Map<String, Map<String, List<?>>> TABLES = Map.of(
+    /** Demo tables for the scripted/browser-dev run (no real daemon session). */
+    private static final Map<String, Map<String, List<?>>> DEMO = Map.of(
         "arrow-roc", Map.of(
             "fpr", List.of(0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 0.7, 1.0),
             "tpr", List.of(0.0, 0.45, 0.6, 0.74, 0.82, 0.9, 0.95, 1.0)),
@@ -49,19 +57,45 @@ public class DataResource {
     );
 
     /**
-     * Returns the column table for a given data reference.
+     * Returns the column table for a data reference: a shared-session DuckDB table if
+     * {@code ref} is a safe table name that exists, else a built-in demo table.
      *
-     * @param ref the ArrowRef id (e.g. {@code arrow-roc}).
-     * @return column-oriented JSON; 404 if unknown.
+     * @param ref  the ArrowRef id or a shared-session table name.
+     * @param rows row cap (default {@value #DEFAULT_ROWS}, max {@value #MAX_ROWS}).
      */
     @GET
     @Path("/{ref}")
     @Produces(MediaType.APPLICATION_JSON)
-    public Map<String, List<?>> table(@PathParam("ref") String ref) {
-        var table = TABLES.get(ref);
-        if (table == null) {
-            throw new NotFoundException("Unknown data ref: " + ref);
+    public Map<String, ? extends List<?>> table(@PathParam("ref") String ref, @QueryParam("rows") Integer rows) {
+        if (isSessionTable(ref)) {
+            // The ref names a real session table — a projection failure here is a genuine
+            // error (e.g. an unmappable column type), NOT "unknown ref"; surface it as 500
+            // rather than masquerading as a 404.
+            try {
+                return SharedSql.columnTable(ref, SharedSql.describe(ref), clampRows(rows));
+            } catch (Throwable t) {
+                LOG.errorf("Failed to project session table %s: %s", ref, t.getMessage());
+                throw new jakarta.ws.rs.InternalServerErrorException(
+                    "Failed to read table '" + ref + "': " + t.getMessage());
+            }
         }
-        return table;
+        var demo = DEMO.get(ref);
+        if (demo != null) return demo;
+        throw new NotFoundException("Unknown data ref: " + ref);
+    }
+
+    /** Whether {@code ref} is a plain identifier naming an existing shared-session table. */
+    private boolean isSessionTable(String ref) {
+        if (ref == null || !ref.matches("[A-Za-z_][A-Za-z0-9_]*")) return false;
+        try {
+            return SharedSql.tables().stream().anyMatch(t -> t.equalsIgnoreCase(ref));
+        } catch (Throwable t) {
+            return false; // no session / bridge unavailable → fall through to demo/404
+        }
+    }
+
+    private static int clampRows(Integer rows) {
+        if (rows == null || rows <= 0) return DEFAULT_ROWS;
+        return Math.min(rows, MAX_ROWS);
     }
 }

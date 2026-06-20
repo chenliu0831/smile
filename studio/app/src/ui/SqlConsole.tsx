@@ -20,6 +20,7 @@ import {
 } from "../daemon/sql";
 import { DataGrid } from "./DataGrid";
 import { agentSqlStatements, freshAgentSql } from "./agentSql";
+import { canLoadDataset, pickDatasetFile, tableNameForPath, readerForPath } from "../daemon/dataset";
 
 /** Statements that return a result set we can render in the grid. */
 const QUERY_SHAPE = /^\s*(select|with|from|table|values|pivot|unpivot|describe|show|summarize)\b/i;
@@ -32,6 +33,14 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   const [running, setRunning] = useState(false);
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  // Per-session query history (most-recent-first, deduped against the immediate prior entry),
+  // click-to-restore into the editor.
+  const [history, setHistory] = useState<string[]>([]);
+  const recordHistory = useCallback((stmt: string) => {
+    const s = stmt.trim();
+    if (!s) return;
+    setHistory((prev) => (prev[0] === s ? prev : [s, ...prev].slice(0, 50)));
+  }, []);
   // Phase 3 — "Ask Clair"/"Fix": when true, the next agent-produced SQL statement is
   // injected into the editor. Records the count of agent SQL tool-calls at request time so
   // we only react to a NEW one (not a stale prior statement).
@@ -39,6 +48,15 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   const agentSqlBaselineRef = useRef(0);   // agent SQL count when the request was sent
   const agentTurnBaselineRef = useRef(0);  // turn count when the request was sent
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // In-app prompt bar (NOT window.prompt/confirm — those are blocked in Tauri's WKWebView,
+  // which is why the Save button appeared stuck). Drives an inline input/confirm row.
+  // kind: "save-name" (enter a table name) | "overwrite" (confirm clobber) | "ask" (NL request).
+  const [promptBar, setPromptBar] = useState<
+    | { kind: "save-name" | "ask"; value: string }
+    | { kind: "overwrite"; name: string; select: string }
+    | { kind: "overwrite-import"; name: string; path: string }
+    | null
+  >(null);
   // The SELECT-shape statement whose result is currently in the grid (NOT the live editor
   // text, which the user may have edited). This is what we re-run to keep the grid current
   // when the underlying table is mutated by the user's own DML or by the agent.
@@ -194,6 +212,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   const run = useCallback(async () => {
     const statement = sql.trim();
     if (!statement || !httpBase || running) return;
+    recordHistory(statement);
     // A result-returning statement renders + becomes the tracked query.
     if (QUERY_SHAPE.test(statement)) {
       await runSelect(statement);
@@ -220,36 +239,27 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
       setRunning(false); runningRef.current = false;
       drainPendingRefresh();
     }
-  }, [sql, httpBase, running, refreshTables, runSelect, drainPendingRefresh]);
+  }, [sql, httpBase, running, refreshTables, runSelect, drainPendingRefresh, recordHistory]);
 
-  const save = useCallback(async () => {
-    const select = sql.trim();
-    if (!select || !httpBase || running) return;
-    const raw = window.prompt("Save query result as table named:");
-    const name = raw?.trim();
-    if (!name) return;
+  // Core save: materialize the given SELECT as a named table. On a 409 (name taken) it opens
+  // the inline overwrite bar rather than blocking on window.confirm.
+  const doSave = useCallback(async (name: string, select: string, overwrite: boolean) => {
+    if (!name || !select || !httpBase) return;
     setRunning(true); runningRef.current = true;
     setError(null);
     setSavedNotice(null);
     try {
       try {
-        await saveAsTable(httpBase, name, select);
+        await saveAsTable(httpBase, name, select, overwrite);
       } catch (e) {
-        // 409 = name taken. Offer to overwrite rather than silently clobbering.
         if (e instanceof SqlRunError && e.status === 409) {
-          if (!window.confirm(`A table named "${name}" already exists. Overwrite it?`)) {
-            setRunning(false); runningRef.current = false;
-            return;
-          }
-          await saveAsTable(httpBase, name, select, true);
-        } else {
-          throw e;
+          // Name taken — surface an inline overwrite confirm (no blocking dialog).
+          setPromptBar({ kind: "overwrite", name, select });
+          return;
         }
+        throw e;
       }
-      // Await the rail refresh so the just-saved table appears immediately (not racing the
-      // subsequent re-renders).
-      await refreshTables();
-      // Show the saved table (becomes the tracked query so it auto-refreshes too).
+      await refreshTables(); // awaited so the saved table appears in the rail immediately
       await runSelect(`SELECT * FROM "${name}"`, { silent: true });
       setSavedNotice(`Saved as “${name}”.`);
     } catch (e) {
@@ -258,7 +268,57 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
       setRunning(false); runningRef.current = false;
       drainPendingRefresh();
     }
-  }, [sql, httpBase, running, refreshTables, runSelect, drainPendingRefresh]);
+  }, [httpBase, refreshTables, runSelect, drainPendingRefresh]);
+
+  // "Save as table" button → open the inline name input (seeded from a sensible default).
+  const save = useCallback(() => {
+    if (!sql.trim() || !httpBase || running) return;
+    setPromptBar({ kind: "save-name", value: "" });
+  }, [sql, httpBase, running]);
+
+  // Core import: load a file into the shared session as a table via /sql read_csv/parquet/
+  // json — NO file copy and NO daemon restart (the old Load Dataset path relaunched the JVM,
+  // ~2s+). Non-destructive by default: a plain CREATE TABLE so a name collision (e.g. a table
+  // the agent loaded or the user saved with the same file stem) opens the overwrite bar
+  // instead of silently clobbering it.
+  const doImport = useCallback(async (name: string, path: string, overwrite: boolean) => {
+    if (!httpBase) return;
+    const verb = overwrite ? "CREATE OR REPLACE TABLE" : "CREATE TABLE";
+    setRunning(true); runningRef.current = true;
+    setError(null); setSavedNotice(null);
+    try {
+      try {
+        await runSql(httpBase, `${verb} "${name}" AS SELECT * FROM ${readerForPath(path)}`);
+      } catch (e) {
+        // DuckDB "table already exists" → offer overwrite instead of clobbering.
+        if (e instanceof SqlRunError && /already exists/i.test(e.message)) {
+          setPromptBar({ kind: "overwrite-import", name, path });
+          return;
+        }
+        throw e;
+      }
+      await refreshTables();
+      setSql(`SELECT * FROM "${name}" LIMIT 100`);
+      await runSelect(`SELECT * FROM "${name}" LIMIT 100`, { silent: true });
+      setSavedNotice(`Imported “${name}”.`);
+    } catch (e) {
+      setError(e instanceof SqlRunError ? e.message : String(e));
+    } finally {
+      setRunning(false); runningRef.current = false;
+    }
+  }, [httpBase, refreshTables, runSelect]);
+
+  const importDataset = useCallback(async () => {
+    if (!httpBase || running) return;
+    let path: string | null;
+    try {
+      path = await pickDatasetFile();
+    } catch {
+      return; // not in desktop app
+    }
+    if (!path) return; // cancelled
+    await doImport(tableNameForPath(path), path, false);
+  }, [httpBase, running, doImport]);
 
   const insert = useCallback((text: string) => {
     setSql((prev) => (prev.trim() ? `${prev} ${text}` : text));
@@ -284,18 +344,16 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   // Clair handles one turn at a time; disable Ask/Fix while a turn streams or a gate is open.
   const chatBusy = state.streaming || state.openGates.length > 0 || awaitingAgentSql;
 
-  const onAsk = () => {
-    const ask = window.prompt(
-      "Ask Clair to write SQL (it lands in the editor):",
-      sql.trim() ? "Refine this query: " : "",
-    );
-    const q = ask?.trim();
-    if (!q) return;
-    // Give the agent the current editor SQL + the table list as context so it returns ONE
-    // runnable statement, which the injection effect drops back into the editor.
+  // "Ask Clair" button → open the inline NL request bar (no blocking dialog).
+  const onAsk = () => setPromptBar({ kind: "ask", value: "" });
+
+  // Submit the inline Ask request to Clair with the editor SQL + single-statement guidance.
+  const submitAsk = (q: string) => {
+    const ask = q.trim();
+    if (!ask) return;
     const ctx = sql.trim() ? `\n\nCurrent query in my editor:\n${sql.trim()}` : "";
     askClair(
-      `In the SQL console I want: ${q}.${ctx}\n\nReply by running ONE DuckDB SQL statement via your SQL tool ` +
+      `In the SQL console I want: ${ask}.${ctx}\n\nReply by running ONE DuckDB SQL statement via your SQL tool ` +
         `(the 'execute' command) against the available tables, so it appears in my editor. Keep it to a single statement.`,
     );
   };
@@ -310,7 +368,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
 
   return (
     <div className="sql-workbench">
-      <SchemaRail tables={tables} onInsert={insert} />
+      <SchemaRail tables={tables} history={history} onInsert={insert} onRestore={setSql} />
       <div className="surface sql-console">
         <div className="sql-editor-row">
           <textarea
@@ -331,6 +389,11 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
             <button className="sql-run primary" onClick={run} disabled={!sql.trim() || running}>
               {running ? "Running…" : "Run"}
             </button>
+            {canLoadDataset() && (
+              <button className="sql-import" onClick={importDataset} disabled={running} title="Import a CSV/Parquet/JSON file as a table (fast — no restart)">
+                ↥ Import data
+              </button>
+            )}
             <button className="sql-save" onClick={save} disabled={!canSave || running} title="Save the query result as a reusable table">
               Save as table
             </button>
@@ -344,6 +407,25 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
             )}
           </div>
         </div>
+
+        {promptBar && (
+          <PromptBar
+            bar={promptBar}
+            onCancel={() => setPromptBar(null)}
+            onSubmitText={(text) => {
+              const kind = promptBar.kind;
+              setPromptBar(null);
+              if (kind === "save-name") doSave(text.trim(), sql.trim(), false);
+              else if (kind === "ask") submitAsk(text);
+            }}
+            onConfirmOverwrite={() => {
+              const bar = promptBar;
+              setPromptBar(null);
+              if (bar.kind === "overwrite") doSave(bar.name, bar.select, true);
+              else if (bar.kind === "overwrite-import") doImport(bar.name, bar.path, true);
+            }}
+          />
+        )}
 
         <SqlStatus result={result} error={error} running={running} savedNotice={savedNotice} />
 
@@ -367,14 +449,101 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   );
 }
 
-/** Left schema rail: tables/views with columns + lineage; click to insert names. */
-function SchemaRail({ tables, onInsert }: { tables: TableInfo[]; onInsert: (text: string) => void }) {
+/**
+ * In-app prompt bar — replaces window.prompt/confirm (which Tauri's WKWebView blocks,
+ * making the Save button appear stuck). Renders an inline text input (save-name / ask) or
+ * an overwrite confirm, with Enter-to-submit and Esc-to-cancel.
+ */
+function PromptBar({
+  bar,
+  onCancel,
+  onSubmitText,
+  onConfirmOverwrite,
+}: {
+  bar:
+    | { kind: "save-name" | "ask"; value: string }
+    | { kind: "overwrite"; name: string; select: string }
+    | { kind: "overwrite-import"; name: string; path: string };
+  onCancel: () => void;
+  onSubmitText: (text: string) => void;
+  onConfirmOverwrite: () => void;
+}) {
+  const [text, setText] = useState("");
+  // Reset the input each time the bar is (re-)opened for an input kind, identified by a
+  // fresh object identity — keying on bar.kind alone left stale text when re-opening the
+  // same kind (audit #5).
+  useEffect(() => { setText(""); }, [bar]);
+
+  if (bar.kind === "overwrite" || bar.kind === "overwrite-import") {
+    const what = bar.kind === "overwrite-import" ? "import into" : "overwrite";
+    return (
+      <div
+        className="sql-promptbar warn"
+        tabIndex={0}
+        autoFocus
+        onKeyDown={(e) => {
+          // Keyboard parity with the input bars (audit #6).
+          if (e.key === "Enter") onConfirmOverwrite();
+          else if (e.key === "Escape") onCancel();
+        }}
+      >
+        <span className="sql-prompt-label">
+          A table named “{bar.name}” already exists. {what === "import into" ? "Replace it with the imported file?" : "Overwrite it?"} (Clair may also be using it.)
+        </span>
+        <button className="sql-prompt-confirm" onClick={onConfirmOverwrite}>
+          {what === "import into" ? "Replace" : "Overwrite"}
+        </button>
+        <button className="sql-prompt-cancel" onClick={onCancel}>Cancel</button>
+      </div>
+    );
+  }
+
+  const label = bar.kind === "save-name" ? "Save result as table:" : "Ask Clair (writes SQL into the editor):";
+  const placeholder = bar.kind === "save-name" ? "table_name" : "e.g. top 10 customers by revenue";
+  const valid = bar.kind === "save-name"
+    ? /^[A-Za-z_][A-Za-z0-9_]*$/.test(text.trim())
+    : text.trim().length > 0;
+
+  return (
+    <div className="sql-promptbar">
+      <span className="sql-prompt-label">{label}</span>
+      <input
+        autoFocus
+        className="sql-prompt-input"
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && valid) onSubmitText(text);
+          else if (e.key === "Escape") onCancel();
+        }}
+      />
+      <button className="sql-prompt-confirm" disabled={!valid} onClick={() => onSubmitText(text)}>
+        {bar.kind === "save-name" ? "Save" : "Ask"}
+      </button>
+      <button className="sql-prompt-cancel" onClick={onCancel}>Cancel</button>
+    </div>
+  );
+}
+
+/** Left schema rail: tables/views with columns + lineage (click to insert) + query history. */
+function SchemaRail({
+  tables,
+  history,
+  onInsert,
+  onRestore,
+}: {
+  tables: TableInfo[];
+  history: string[];
+  onInsert: (text: string) => void;
+  onRestore: (sql: string) => void;
+}) {
   return (
     <div className="schema-rail">
       <div className="schema-rail-title">Tables</div>
       {tables.length === 0 ? (
         <div className="schema-rail-empty">
-          No tables yet. Query the input file directly, or ask Clair to load it.
+          No tables yet. Import data, query the input file directly, or ask Clair to load it.
         </div>
       ) : (
         tables.map((t) => (
@@ -399,6 +568,21 @@ function SchemaRail({ tables, onInsert }: { tables: TableInfo[]; onInsert: (text
             </ul>
           </details>
         ))
+      )}
+
+      {history.length > 0 && (
+        <details className="schema-history" open>
+          <summary className="schema-rail-title">History</summary>
+          <ul className="history-list">
+            {history.map((h, i) => (
+              <li key={i}>
+                <button className="history-item" title={h} onClick={() => onRestore(h)}>
+                  {h.replace(/\s+/g, " ").slice(0, 60)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
     </div>
   );
