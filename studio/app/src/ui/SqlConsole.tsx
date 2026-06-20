@@ -132,12 +132,14 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   }, [refreshTables]);
 
   // The agent shares this DuckDB session — a finished turn may have created/loaded/mutated
-  // tables (init/preprocess/feature-engineering skills do). On each agent turn boundary:
-  // (1) refresh the schema rail, and (2) auto re-run the tracked query so the result grid
-  // reflects the agent's transformation without a manual action (user chose auto-refresh).
-  const agentActivity = `${state.turns.length}:${state.streaming}:${
-    state.turns.reduce((acc, t) => acc + t.toolCalls.length, 0)
-  }`;
+  // tables (init/preprocess/feature-engineering skills do). On each agent turn BOUNDARY —
+  // i.e. when a turn FINISHES, not on every tool-call tick within it — (1) refresh the schema
+  // rail and (2) auto re-run the tracked query so the result grid reflects the agent's
+  // transformation. Keying on a per-tool-call counter (the old behavior) re-ran the query and
+  // the N+1 /tables on EVERY tool-call during a turn (a summarize turn fires ~6+), contending
+  // with the agent on the single synchronized SQL connection. A completed turn is the only
+  // point the session is actually quiescent and worth re-reading.
+  const finishedTurnCount = state.turns.filter((t) => t.role === "agent" && t.status !== "streaming").length;
   useEffect(() => {
     refreshTables();
     if (lastQueryRef.current) {
@@ -147,7 +149,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
       else pendingRefreshRef.current = true;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentActivity]);
+  }, [finishedTurnCount]);
 
   // Seed a starter query when a dataset is present, so a non-SQL user gets an instant
   // zero-typing preview. Conflict-free: read the input file directly via read_csv/parquet/

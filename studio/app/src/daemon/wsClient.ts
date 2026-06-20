@@ -35,6 +35,8 @@ export class WebSocketRunConnection implements RunConnection {
   /** Messages queued before the socket is OPEN, flushed on open in order. */
   private queue: unknown[] = [];
   private failed = false;
+  /** Set by stop() so a deliberate teardown isn't reported as a lost connection. */
+  private closing = false;
 
   private readonly base: string;
 
@@ -57,8 +59,11 @@ export class WebSocketRunConnection implements RunConnection {
     };
     this.ws.onerror = () => this.fail("Connection to the daemon failed.");
     this.ws.onclose = () => {
-      // Anything still queued (never sent) is lost; surface it rather than buffer forever.
-      if (this.queue.length > 0) this.fail("Connection closed before messages were sent.");
+      // A deliberate stop() (unmount / reconnect) is expected — stay quiet. ANY other close
+      // means the daemon died (crash, killed, expired-token disconnect). Previously this only
+      // surfaced if a message was still queued, so an idle-time death went unnoticed and the
+      // NEXT user message buffered forever against a CLOSED socket. Always surface it.
+      if (!this.closing) this.fail("Connection to the daemon was lost.");
     };
   }
 
@@ -104,6 +109,7 @@ export class WebSocketRunConnection implements RunConnection {
   }
 
   stop(): void {
+    this.closing = true; // mark deliberate so onclose doesn't report a lost connection
     try {
       this.ws.close();
     } catch {

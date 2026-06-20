@@ -7,6 +7,8 @@ class FakeWebSocket {
   readyState = 1;
   onopen: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
   sent: string[] = [];
   url: string;
   constructor(url: string) {
@@ -20,6 +22,11 @@ class FakeWebSocket {
   }
   receive(obj: unknown) {
     this.onmessage?.({ data: JSON.stringify(obj) });
+  }
+  /** Simulate the daemon dropping the connection (crash / kill / expired token). */
+  serverClose() {
+    this.readyState = 3;
+    this.onclose?.();
   }
 }
 
@@ -74,5 +81,27 @@ test("ignores malformed inbound frames without throwing", () => {
   const seen: DaemonMessage[] = [];
   conn.subscribe((m) => seen.push(m));
   expect(() => fake.onmessage?.({ data: "not json{" })).not.toThrow();
+  expect(seen).toHaveLength(0);
+});
+
+// Bug-bash P2: an idle-time daemon death (crash / kill / expired-token disconnect) used to
+// close the socket silently — the next user message then buffered forever against a CLOSED
+// socket. The close must now surface as a failed turn even with nothing queued.
+test("an unexpected close (idle, nothing queued) surfaces a lost-connection failure", () => {
+  const { fake, conn } = setup();
+  const seen: DaemonMessage[] = [];
+  conn.subscribe((m) => seen.push(m));
+  fake.serverClose(); // daemon drops the connection while the user is idle
+  expect(seen.map((m) => m.type)).toEqual(["agent-chunk", "run-finished"]);
+  expect((seen[0] as { text: string }).text).toMatch(/lost/i);
+  expect((seen[1] as { status: string }).status).toBe("failed");
+});
+
+test("a deliberate stop() close does NOT report a lost connection", () => {
+  const { fake, conn } = setup();
+  const seen: DaemonMessage[] = [];
+  conn.subscribe((m) => seen.push(m));
+  conn.stop();
+  fake.onclose?.(); // close event fired by the deliberate stop
   expect(seen).toHaveLength(0);
 });

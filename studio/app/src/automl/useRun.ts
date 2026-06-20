@@ -84,7 +84,6 @@ export function useRun(connect: typeof connectRun = connectRun): RunController {
   // connect effect (which is keyed on `generation`, not `connect`).
   const connectRef = useRef(connect);
   connectRef.current = connect;
-  const [, force] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [dataset, setDataset] = useState<LoadedDataset | null>(null);
   const [datasetInfo, setDatasetInfo] = useState<DatasetInfo | null>(null);
@@ -106,8 +105,10 @@ export function useRun(connect: typeof connectRun = connectRun): RunController {
       connRef.current = conn;
       setMode(mode);
       unsub = conn.subscribe((msg) => {
+        // The reducer returns a fresh state ref for every state-changing message (only
+        // unknown messages return the same ref), so dispatch alone re-renders — the prior
+        // extra force() was a redundant second render per WS frame (UI jank while streaming).
         dispatch(msg);
-        force((n) => n + 1);
         if (auto && msg.type === "gate-opened") {
           setTimeout(() => conn.answerGate(msg.gate.id, "AUC"), 200);
         }
