@@ -19,18 +19,25 @@ import {
   type TableInfo,
 } from "../daemon/sql";
 import { DataGrid } from "./DataGrid";
+import { agentSqlStatements, freshAgentSql } from "./agentSql";
 
 /** Statements that return a result set we can render in the grid. */
 const QUERY_SHAPE = /^\s*(select|with|from|table|values|pivot|unpivot|describe|show|summarize)\b/i;
 
 export function SqlConsole({ injected }: { injected?: { sql: string; n: number } | null }) {
-  const { httpBase, datasetInfo, state } = useRunContext();
+  const { httpBase, datasetInfo, state, sendMessage } = useRunContext();
   const [sql, setSql] = useState("");
   const [result, setResult] = useState<SqlResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [tables, setTables] = useState<TableInfo[]>([]);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  // Phase 3 — "Ask Clair"/"Fix": when true, the next agent-produced SQL statement is
+  // injected into the editor. Records the count of agent SQL tool-calls at request time so
+  // we only react to a NEW one (not a stale prior statement).
+  const [awaitingAgentSql, setAwaitingAgentSql] = useState(false);
+  const agentSqlBaselineRef = useRef(0);   // agent SQL count when the request was sent
+  const agentTurnBaselineRef = useRef(0);  // turn count when the request was sent
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   // The SELECT-shape statement whose result is currently in the grid (NOT the live editor
   // text, which the user may have edited). This is what we re-run to keep the grid current
@@ -153,6 +160,37 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [injected?.n]);
 
+  // All SQL statements the agent has produced this session (kind="sql" tool-call code).
+  const sqlStatements = agentSqlStatements(state.turns);
+
+  // Phase 3: when an "Ask Clair"/"Fix" request is outstanding, inject the agent's resulting
+  // SQL once the turn we triggered FINISHES (not mid-stream): the agent often runs an
+  // exploratory DESCRIBE/SELECT before the real statement, so we wait for the turn to end
+  // and inject the LAST new statement. If the turn ends with no new SQL at all (the agent
+  // replied with prose or a clarifying question), clear the wait so Ask/Fix don't stick.
+  useEffect(() => {
+    if (!awaitingAgentSql) return;
+    const turnInFlight = state.streaming || state.openGates.length > 0;
+    const ourTurnEnded = !turnInFlight && state.turns.length > agentTurnBaselineRef.current;
+    if (!ourTurnEnded) return; // still waiting for the turn we triggered to complete
+    const fresh = freshAgentSql(sqlStatements, agentSqlBaselineRef.current, "last");
+    if (fresh != null) {
+      setSql(fresh);
+      textareaRef.current?.focus();
+    }
+    setAwaitingAgentSql(false); // reset whether or not the agent produced SQL
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [awaitingAgentSql, state.streaming, state.openGates.length, state.turns.length, sqlStatements.length]);
+
+  // Send a prompt to Clair and arm injection of its resulting SQL back into the editor.
+  const askClair = useCallback((prompt: string) => {
+    if (state.streaming || state.openGates.length > 0) return; // chat busy; UI also disables
+    agentSqlBaselineRef.current = sqlStatements.length;
+    agentTurnBaselineRef.current = state.turns.length;
+    setAwaitingAgentSql(true);
+    sendMessage(prompt);
+  }, [sendMessage, state.streaming, state.openGates.length, state.turns.length, sqlStatements.length]);
+
   const run = useCallback(async () => {
     const statement = sql.trim();
     if (!statement || !httpBase || running) return;
@@ -243,6 +281,32 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
 
   // A SELECT/WITH (or FROM-first) statement can be saved as a table.
   const canSave = /^\s*(select|with|from|table|values)\b/i.test(sql);
+  // Clair handles one turn at a time; disable Ask/Fix while a turn streams or a gate is open.
+  const chatBusy = state.streaming || state.openGates.length > 0 || awaitingAgentSql;
+
+  const onAsk = () => {
+    const ask = window.prompt(
+      "Ask Clair to write SQL (it lands in the editor):",
+      sql.trim() ? "Refine this query: " : "",
+    );
+    const q = ask?.trim();
+    if (!q) return;
+    // Give the agent the current editor SQL + the table list as context so it returns ONE
+    // runnable statement, which the injection effect drops back into the editor.
+    const ctx = sql.trim() ? `\n\nCurrent query in my editor:\n${sql.trim()}` : "";
+    askClair(
+      `In the SQL console I want: ${q}.${ctx}\n\nReply by running ONE DuckDB SQL statement via your SQL tool ` +
+        `(the 'execute' command) against the available tables, so it appears in my editor. Keep it to a single statement.`,
+    );
+  };
+
+  const onFix = () => {
+    if (!error) return;
+    askClair(
+      `My SQL failed. Statement:\n${sql.trim()}\n\nError:\n${error}\n\n` +
+        `Fix it and run the corrected single DuckDB statement via your SQL tool ('execute') so it appears in my editor.`,
+    );
+  };
 
   return (
     <div className="sql-workbench">
@@ -270,6 +334,14 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
             <button className="sql-save" onClick={save} disabled={!canSave || running} title="Save the query result as a reusable table">
               Save as table
             </button>
+            <button className="sql-ask" onClick={onAsk} disabled={chatBusy} title="Describe what you want in plain English; Clair writes the SQL into the editor">
+              {awaitingAgentSql ? "Asking Clair…" : "✦ Ask Clair"}
+            </button>
+            {error && (
+              <button className="sql-fix" onClick={onFix} disabled={chatBusy} title="Ask Clair to fix the SQL error">
+                ✦ Fix with Clair
+              </button>
+            )}
           </div>
         </div>
 
