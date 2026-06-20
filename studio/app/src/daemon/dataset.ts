@@ -34,6 +34,21 @@ export async function pickDatasetFile(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+/**
+ * Stage a picked file into the RUNNING daemon's input/ dir (no restart, session preserved),
+ * so the agent can read ./input/<file> by the ADR-0005 convention while the fast in-session
+ * import also makes it queryable as a table. Returns the file name as the agent sees it.
+ * Throws if not in Tauri or if no daemon is running (caller falls back to a cold load).
+ */
+export async function stageDataset(path: string): Promise<string> {
+  if (!inTauri()) throw new Error("Dataset staging requires the desktop app.");
+  const { invoke } = await import("@tauri-apps/api/core");
+  const res = await invoke<{ file_name: string; size_bytes: number }>("stage_dataset", {
+    sourcePath: path,
+  });
+  return res.file_name;
+}
+
 /** The SQL identifier a file imports as (file stem, sanitized to a safe table name). */
 export function tableNameForPath(path: string): string {
   const base = path.split(/[\\/]/).pop() ?? path;

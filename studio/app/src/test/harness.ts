@@ -56,15 +56,22 @@ function scriptGreeting(script: DaemonMessage[]): string | undefined {
  * the player emits its own session-started on start(), then pumps the script. To avoid a
  * duplicate, we drop the transcript's leading session-started and let the player emit it.
  */
-export function fixtureConnect(opts: { file?: string; player?: PlayerOptions } = {}): typeof import("../daemon/connect").connectRun {
+export function fixtureConnect(
+  opts: { file?: string; player?: PlayerOptions; httpBase?: string } = {},
+): typeof import("../daemon/connect").connectRun {
   const full = loadWsScript(opts.file);
   // Drop the leading session-started (the player emits its own on start()).
   const script = full[0]?.type === "session-started" ? full.slice(1) : full;
   const greeting = scriptGreeting(full);
-  const connect = async (): Promise<RunConnectionResult> => ({
-    connection: new MockRunPlayer(script, { stepMs: 0, greeting, ...(opts.player ?? {}) }),
-    mode: "daemon",
-  });
+  const connect = async (): Promise<RunConnectionResult> => {
+    const player = new MockRunPlayer(script, { stepMs: 0, greeting, ...(opts.player ?? {}) });
+    // The replay player has no real daemon; tests that exercise the HTTP path (addData,
+    // SQL) can supply a base so the controller takes the warm in-session path.
+    if (opts.httpBase) {
+      (player as unknown as { httpBase: () => string | null }).httpBase = () => opts.httpBase!;
+    }
+    return { connection: player, mode: "daemon" };
+  };
   // connectRun's signature is (stepMs?, workingDir?) => Promise<RunConnectionResult>; the
   // harness ignores both args. Cast to the exact type for the injection seam.
   return connect as unknown as typeof import("../daemon/connect").connectRun;

@@ -24,7 +24,7 @@ import { SqlConsole } from "./SqlConsole";
 
 function WorkspaceInner() {
   const c = useRunContext();
-  const { state, datasetInfo, dataset, canLoadDataset, loadDataset, sendMessage } = c;
+  const { state, datasetInfo, dataset, canLoadDataset, addData, sendMessage } = c;
 
   const hasDataset = !!datasetInfo || !!dataset;
   const hasArtifacts = Object.keys(state.artifacts).length > 0;
@@ -102,7 +102,7 @@ function WorkspaceInner() {
     <ChatWelcome
       datasetName={datasetInfo?.fileName ?? dataset?.fileName ?? null}
       canLoadDataset={canLoadDataset}
-      onLoadDataset={loadDataset}
+      onAddData={addData}
       onPrompt={sendMessage}
     />
   );

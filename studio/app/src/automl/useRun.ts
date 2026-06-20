@@ -1,8 +1,17 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../daemon/runState";
 import { connectRun, type ConnectionMode } from "../daemon/connect";
-import { pickAndLoadDataset, canLoadDataset, type LoadedDataset } from "../daemon/dataset";
+import {
+  pickAndLoadDataset,
+  pickDatasetFile,
+  stageDataset,
+  tableNameForPath,
+  readerForPath,
+  canLoadDataset,
+  type LoadedDataset,
+} from "../daemon/dataset";
 import { fetchDatasetInfo, type DatasetInfo } from "../daemon/datasetInfo";
+import { runSql } from "../daemon/sql";
 import type { RunConnection } from "../daemon/wsClient";
 import type { DaemonMessage } from "../daemon/protocol";
 
@@ -18,7 +27,19 @@ export interface RunController {
   mode: ConnectionMode;
   /** Whether dataset loading is available (desktop app only). */
   canLoadDataset: boolean;
-  /** Prompt for a dataset file, stage it, and restart the session against it. */
+  /**
+   * The single "Add data" action: pick a file, stage it into the RUNNING daemon's input/
+   * (no restart — conversation + session preserved), import it as a queryable session table,
+   * and refresh datasetInfo so the UI reflects it. Falls back to the cold-start load (which
+   * launches a daemon) only when none is running. Returns the imported table name, or null
+   * if cancelled/unavailable.
+   */
+  addData: () => Promise<string | null>;
+  /**
+   * LEGACY cold-start path: prompt for a dataset, copy it into a fresh session dir, and
+   * RESTART the daemon there. Retained for when no daemon is running yet; the warm path is
+   * {@link addData}.
+   */
   loadDataset: () => Promise<void>;
   /** Send a free-text user turn (start or continue the conversation). */
   sendMessage: (text: string) => void;
@@ -118,6 +139,19 @@ export function useRun(connect: typeof connectRun = connectRun): RunController {
     };
   }, [generation]);
 
+  // Cold-start load: copy into a fresh session dir + restart the daemon there. Shared by the
+  // legacy `loadDataset` and the `addData` fallback (when no daemon is running yet).
+  const loadDatasetImpl = async () => {
+    const loaded = await pickAndLoadDataset();
+    if (!loaded) return; // cancelled
+    setDataset(loaded);
+    setDatasetInfo(null); // cleared until the new daemon reports it
+    workingDirRef.current = loaded.workingDir;
+    dispatch({ __local: "reset" }); // clear prior dataset's turns/stages/artifacts
+    connRef.current?.stop();
+    setGeneration((g) => g + 1); // reconnect against the new working dir
+  };
+
   return {
     state,
     dataset,
@@ -125,16 +159,28 @@ export function useRun(connect: typeof connectRun = connectRun): RunController {
     httpBase,
     mode,
     canLoadDataset: canLoadDataset(),
-    loadDataset: async () => {
-      const loaded = await pickAndLoadDataset();
-      if (!loaded) return; // cancelled
-      setDataset(loaded);
-      setDatasetInfo(null); // cleared until the new daemon reports it
-      workingDirRef.current = loaded.workingDir;
-      dispatch({ __local: "reset" }); // clear prior dataset's turns/stages/artifacts
-      connRef.current?.stop();
-      setGeneration((g) => g + 1); // reconnect against the new working dir
+    addData: async () => {
+      const base = httpBase;
+      // No running daemon yet → fall back to the cold-start load (which launches one).
+      if (!base) {
+        await loadDatasetImpl();
+        return null;
+      }
+      const path = await pickDatasetFile();
+      if (!path) return null; // cancelled
+      // Stage into the running daemon's input/ so the agent can read ./input/<file>
+      // (ADR-0005) — best-effort; the in-session table below is the primary access path.
+      await stageDataset(path).catch(() => {/* not fatal: the table import still works */});
+      const name = tableNameForPath(path);
+      // Fast in-session import (no restart): CREATE OR REPLACE so re-adding a file just
+      // refreshes it rather than erroring on a name collision.
+      await runSql(base, `CREATE OR REPLACE TABLE "${name}" AS SELECT * FROM ${readerForPath(path)}`);
+      // Reflect it in the UI without a restart: re-fetch the daemon's dataset insights.
+      const info = await fetchDatasetInfo(base);
+      setDatasetInfo(info);
+      return name;
     },
+    loadDataset: loadDatasetImpl,
     sendMessage: (text) => {
       // One turn at a time: the daemon's Conversation is shared mutable state, so refuse
       // to send while a turn is streaming or a gate is open (defensive — the UI also

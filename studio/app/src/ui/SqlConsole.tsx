@@ -20,13 +20,13 @@ import {
 } from "../daemon/sql";
 import { DataGrid } from "./DataGrid";
 import { agentSqlStatements, freshAgentSql } from "./agentSql";
-import { canLoadDataset, pickDatasetFile, tableNameForPath, readerForPath } from "../daemon/dataset";
+import { canLoadDataset } from "../daemon/dataset";
 
 /** Statements that return a result set we can render in the grid. */
 const QUERY_SHAPE = /^\s*(select|with|from|table|values|pivot|unpivot|describe|show|summarize)\b/i;
 
 export function SqlConsole({ injected }: { injected?: { sql: string; n: number } | null }) {
-  const { httpBase, datasetInfo, state, sendMessage } = useRunContext();
+  const { httpBase, datasetInfo, state, sendMessage, addData } = useRunContext();
   const [sql, setSql] = useState("");
   const [result, setResult] = useState<SqlResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +54,6 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   const [promptBar, setPromptBar] = useState<
     | { kind: "save-name" | "ask"; value: string }
     | { kind: "overwrite"; name: string; select: string }
-    | { kind: "overwrite-import"; name: string; path: string }
     | null
   >(null);
   // The SELECT-shape statement whose result is currently in the grid (NOT the live editor
@@ -276,27 +275,17 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
     setPromptBar({ kind: "save-name", value: "" });
   }, [sql, httpBase, running]);
 
-  // Core import: load a file into the shared session as a table via /sql read_csv/parquet/
-  // json — NO file copy and NO daemon restart (the old Load Dataset path relaunched the JVM,
-  // ~2s+). Non-destructive by default: a plain CREATE TABLE so a name collision (e.g. a table
-  // the agent loaded or the user saved with the same file stem) opens the overwrite bar
-  // instead of silently clobbering it.
-  const doImport = useCallback(async (name: string, path: string, overwrite: boolean) => {
-    if (!httpBase) return;
-    const verb = overwrite ? "CREATE OR REPLACE TABLE" : "CREATE TABLE";
+  // "Import data" delegates to the single shared addData() action (pick → stage into the
+  // running daemon's input/ for the agent → fast in-session CREATE OR REPLACE TABLE → refresh
+  // the dataset chip), then renders the imported table here. One flow, no JVM restart, no
+  // duplicate overwrite prompt — addData uses CREATE OR REPLACE so re-adding just refreshes.
+  const importDataset = useCallback(async () => {
+    if (!httpBase || running) return;
     setRunning(true); runningRef.current = true;
     setError(null); setSavedNotice(null);
     try {
-      try {
-        await runSql(httpBase, `${verb} "${name}" AS SELECT * FROM ${readerForPath(path)}`);
-      } catch (e) {
-        // DuckDB "table already exists" → offer overwrite instead of clobbering.
-        if (e instanceof SqlRunError && /already exists/i.test(e.message)) {
-          setPromptBar({ kind: "overwrite-import", name, path });
-          return;
-        }
-        throw e;
-      }
+      const name = await addData();
+      if (!name) return; // cancelled / unavailable
       await refreshTables();
       setSql(`SELECT * FROM "${name}" LIMIT 100`);
       await runSelect(`SELECT * FROM "${name}" LIMIT 100`, { silent: true });
@@ -306,19 +295,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
     } finally {
       setRunning(false); runningRef.current = false;
     }
-  }, [httpBase, refreshTables, runSelect]);
-
-  const importDataset = useCallback(async () => {
-    if (!httpBase || running) return;
-    let path: string | null;
-    try {
-      path = await pickDatasetFile();
-    } catch {
-      return; // not in desktop app
-    }
-    if (!path) return; // cancelled
-    await doImport(tableNameForPath(path), path, false);
-  }, [httpBase, running, doImport]);
+  }, [httpBase, running, addData, refreshTables, runSelect]);
 
   const insert = useCallback((text: string) => {
     setSql((prev) => (prev.trim() ? `${prev} ${text}` : text));
@@ -422,7 +399,6 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
               const bar = promptBar;
               setPromptBar(null);
               if (bar.kind === "overwrite") doSave(bar.name, bar.select, true);
-              else if (bar.kind === "overwrite-import") doImport(bar.name, bar.path, true);
             }}
           />
         )}
@@ -462,8 +438,7 @@ function PromptBar({
 }: {
   bar:
     | { kind: "save-name" | "ask"; value: string }
-    | { kind: "overwrite"; name: string; select: string }
-    | { kind: "overwrite-import"; name: string; path: string };
+    | { kind: "overwrite"; name: string; select: string };
   onCancel: () => void;
   onSubmitText: (text: string) => void;
   onConfirmOverwrite: () => void;
@@ -474,8 +449,7 @@ function PromptBar({
   // same kind (audit #5).
   useEffect(() => { setText(""); }, [bar]);
 
-  if (bar.kind === "overwrite" || bar.kind === "overwrite-import") {
-    const what = bar.kind === "overwrite-import" ? "import into" : "overwrite";
+  if (bar.kind === "overwrite") {
     return (
       <div
         className="sql-promptbar warn"
@@ -488,10 +462,10 @@ function PromptBar({
         }}
       >
         <span className="sql-prompt-label">
-          A table named “{bar.name}” already exists. {what === "import into" ? "Replace it with the imported file?" : "Overwrite it?"} (Clair may also be using it.)
+          A table named “{bar.name}” already exists. Overwrite it? (Clair may also be using it.)
         </span>
         <button className="sql-prompt-confirm" onClick={onConfirmOverwrite}>
-          {what === "import into" ? "Replace" : "Overwrite"}
+          Overwrite
         </button>
         <button className="sql-prompt-cancel" onClick={onCancel}>Cancel</button>
       </div>

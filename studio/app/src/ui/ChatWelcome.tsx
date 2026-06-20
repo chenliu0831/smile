@@ -23,12 +23,12 @@ const DATASET_PROMPTS: StarterPrompt[] = [
 export function ChatWelcome({
   datasetName,
   canLoadDataset,
-  onLoadDataset,
+  onAddData,
   onPrompt,
 }: {
   datasetName: string | null;
   canLoadDataset: boolean;
-  onLoadDataset: () => void;
+  onAddData: () => void;
   onPrompt: (prompt: string) => void;
 }) {
   const hasData = !!datasetName;
@@ -41,18 +41,18 @@ export function ChatWelcome({
         {hasData ? (
           <>📄 <strong>{datasetName}</strong> is loaded and ready to analyze.</>
         ) : (
-          <>No dataset loaded yet. Load one to get started.</>
+          <>No dataset yet. Add one to get started.</>
         )}
       </div>
 
       {!hasData && (
         <button
           className="welcome-cta"
-          onClick={onLoadDataset}
+          onClick={onAddData}
           disabled={!canLoadDataset}
           title={canLoadDataset ? "Choose a dataset file" : "Available in the desktop app"}
         >
-          Load a dataset
+          Add data
         </button>
       )}
 

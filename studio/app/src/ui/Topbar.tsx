@@ -14,7 +14,7 @@ function formatSize(bytes: number): string {
 }
 
 export function Topbar() {
-  const { state, dataset, datasetInfo, canLoadDataset, loadDataset, mode } = useRunContext();
+  const { state, dataset, datasetInfo, canLoadDataset, addData, mode } = useRunContext();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +23,9 @@ export function Topbar() {
     setError(null);
     setLoading(true);
     try {
-      await loadDataset();
+      // Unified "Add data": warm in-session import (no JVM restart) when a daemon is up,
+      // cold load otherwise. Conversation + session are preserved on the warm path.
+      await addData();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -70,9 +72,9 @@ export function Topbar() {
         className="topbar-btn"
         onClick={onLoad}
         disabled={loading || !canLoadDataset}
-        title={canLoadDataset ? "Load a dataset file" : "Available in the desktop app"}
+        title={canLoadDataset ? "Add a dataset (CSV/Parquet/JSON) — no restart" : "Available in the desktop app"}
       >
-        {loading ? "Loading…" : dataset ? "Change Dataset" : "Load Dataset"}
+        {loading ? "Adding…" : (datasetInfo || dataset) ? "Add data" : "Add data"}
       </button>
 
       {/* "Working" only while a turn is actually streaming; otherwise reflect that the

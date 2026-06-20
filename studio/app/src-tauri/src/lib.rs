@@ -388,6 +388,51 @@ fn load_dataset(
     })
 }
 
+/// Result of staging a dataset into the RUNNING daemon's working dir (no restart).
+#[derive(serde::Serialize)]
+pub struct StagedDataset {
+    /// The file name as the agent sees it under ./input/ (ADR-0005 convention).
+    file_name: String,
+    size_bytes: u64,
+}
+
+/// Copies a chosen dataset file into the ALREADY-RUNNING daemon's `input/` folder so the
+/// agent can read `./input/<file>` (ADR-0005) WITHOUT a JVM restart or a new session — the
+/// fast unified "Add data" path. Errors if no daemon is running (the caller should fall back
+/// to load_dataset, which launches one). Unlike load_dataset, this preserves the live
+/// conversation + shared DuckDB session.
+#[tauri::command]
+fn stage_dataset(
+    state: State<DaemonState>,
+    source_path: String,
+) -> Result<StagedDataset, String> {
+    use std::path::Path;
+    let src = Path::new(&source_path);
+    if !src.is_file() {
+        return Err(format!("not a file: {source_path}"));
+    }
+    let file_name = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("invalid file name")?
+        .to_string();
+
+    // Stage into the running daemon's working_dir/input/ — no restart, session preserved.
+    let working_dir = {
+        let guard = state.0.lock().unwrap();
+        match guard.as_ref() {
+            Some(d) => d.working_dir.clone(),
+            None => return Err("no running daemon to stage into".into()),
+        }
+    };
+    let input_dir = Path::new(&working_dir).join("input");
+    std::fs::create_dir_all(&input_dir).map_err(|e| e.to_string())?;
+    let dest = input_dir.join(&file_name);
+    std::fs::copy(src, &dest).map_err(|e| format!("copy failed: {e}"))?;
+    let size_bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    Ok(StagedDataset { file_name, size_bytes })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -411,7 +456,8 @@ pub fn run() {
             set_llm_config,
             start_daemon,
             stop_daemon,
-            load_dataset
+            load_dataset,
+            stage_dataset
         ])
         .run(tauri::generate_context!())
         .expect("error while running Smile Studio");
