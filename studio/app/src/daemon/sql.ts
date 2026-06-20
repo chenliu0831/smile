@@ -37,14 +37,27 @@ export class SqlRunError extends Error {
 const ARROW_STREAM = "application/vnd.apache.arrow.stream";
 
 /**
+ * The fetch implementation the daemon clients use. Defaults to the global `fetch`; tests
+ * (and the replay-fixture harness) inject a stub so the SQL/dataset path can be exercised
+ * against captured daemon payloads without a live backend.
+ */
+export type FetchFn = typeof fetch;
+
+/**
  * Runs one SQL statement on the shared session.
  *
  * @param httpBase the daemon HTTP base (e.g. http://127.0.0.1:PORT/api/v1).
  * @param sql a single SQL statement.
  * @param maxRows optional cap on returned SELECT rows.
+ * @param fetchFn fetch implementation (injectable for tests; defaults to global fetch).
  */
-export async function runSql(httpBase: string, sql: string, maxRows?: number): Promise<SqlResult> {
-  const res = await fetch(`${httpBase}/sql`, {
+export async function runSql(
+  httpBase: string,
+  sql: string,
+  maxRows?: number,
+  fetchFn: FetchFn = fetch,
+): Promise<SqlResult> {
+  const res = await fetchFn(`${httpBase}/sql`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ sql, maxRows }),
@@ -108,8 +121,8 @@ export interface TableInfo {
 }
 
 /** Lists the tables/views in the shared session with columns + lineage. */
-export async function fetchTables(httpBase: string): Promise<TableInfo[]> {
-  const res = await fetch(`${httpBase}/tables`);
+export async function fetchTables(httpBase: string, fetchFn: FetchFn = fetch): Promise<TableInfo[]> {
+  const res = await fetchFn(`${httpBase}/tables`);
   // Throw on a transient failure so callers can keep the prior list rather than wiping the
   // rail to "no tables" (a non-ok here is a daemon hiccup, not an empty schema).
   if (!res.ok) throw new SqlRunError(`/tables failed (${res.status})`, res.status);
@@ -127,8 +140,9 @@ export async function saveAsTable(
   name: string,
   select: string,
   overwrite = false,
+  fetchFn: FetchFn = fetch,
 ): Promise<string[]> {
-  const res = await fetch(`${httpBase}/sql/save`, {
+  const res = await fetchFn(`${httpBase}/sql/save`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, select, overwrite }),

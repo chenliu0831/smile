@@ -5,11 +5,23 @@
  */
 import { createContext, useContext, type ReactNode } from "react";
 import { useRun, type RunController } from "./useRun";
+import type { connectRun } from "../daemon/connect";
 
 const RunContext = createContext<RunController | null>(null);
 
-export function RunProvider({ children }: { children: ReactNode }) {
-  const controller = useRun();
+/**
+ * @param connect optional connection factory (defaults to the real `connectRun`). The
+ *   replay-fixture test harness passes a fixture-backed factory so the entire tree renders
+ *   against captured daemon frames with no live backend.
+ */
+export function RunProvider({
+  children,
+  connect,
+}: {
+  children: ReactNode;
+  connect?: typeof connectRun;
+}) {
+  const controller = useRun(connect);
   return <RunContext.Provider value={controller}>{children}</RunContext.Provider>;
 }
 

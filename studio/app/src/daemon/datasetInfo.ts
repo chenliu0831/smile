@@ -31,9 +31,13 @@ export function httpBaseFromWs(wsUrl: string): string {
  * `full` requests the whole frame (capped daemon-side) for the interactive explorer;
  * the default returns a bounded preview for the Data panel.
  */
-export async function fetchDatasetInfo(httpBase: string, full = false): Promise<DatasetInfo | null> {
+export async function fetchDatasetInfo(
+  httpBase: string,
+  full = false,
+  fetchFn: typeof fetch = fetch,
+): Promise<DatasetInfo | null> {
   try {
-    const res = await fetch(`${httpBase}/dataset${full ? "?full=true" : ""}`);
+    const res = await fetchFn(`${httpBase}/dataset${full ? "?full=true" : ""}`);
     if (!res.ok) return null;
     return (await res.json()) as DatasetInfo;
   } catch {

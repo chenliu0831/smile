@@ -50,10 +50,19 @@ function rootReducer(state: RunState, action: DaemonMessage | LocalAction): RunS
  * Drives the interactive agent session into RunState. The source is chosen at connect
  * time (connectRun, ADR-0002): a real daemon WebSocket when the Tauri Shell reports one
  * attached, otherwise the in-process mock. The UI is identical for both.
+ *
+ * @param connect the connection factory. Defaults to the real `connectRun`; the
+ *   replay-fixture test harness injects one returning a `MockRunPlayer` over captured
+ *   daemon frames, so the whole connect→run→summarize flow is driven through the real
+ *   reducer + UI without a live backend.
  */
-export function useRun(): RunController {
+export function useRun(connect: typeof connectRun = connectRun): RunController {
   const [state, dispatch] = useReducer(rootReducer, initialRunState);
   const connRef = useRef<RunConnection | null>(null);
+  // The factory is captured in a ref so a new identity on re-render never re-runs the
+  // connect effect (which is keyed on `generation`, not `connect`).
+  const connectRef = useRef(connect);
+  connectRef.current = connect;
   const [, force] = useState(0);
   const [generation, setGeneration] = useState(0);
   const [dataset, setDataset] = useState<LoadedDataset | null>(null);
@@ -68,7 +77,7 @@ export function useRun(): RunController {
     // Demo/screenshot aid: ?auto sends an opening message + auto-answers gates.
     const auto = typeof window !== "undefined" && window.location.search.includes("auto");
 
-    connectRun(350, workingDirRef.current).then(({ connection: conn, mode }) => {
+    connectRef.current(350, workingDirRef.current).then(({ connection: conn, mode }) => {
       if (disposed) {
         conn.stop();
         return;
