@@ -19,10 +19,10 @@ import { useEffect, useRef, useState } from "react";
 // the WASM off the import path so the pure transform layer (./dataFrame) stays testable.
 import type { HTMLPerspectiveViewerElement } from "@finos/perspective-viewer";
 
-import { toArrowIPC, type DataGridData } from "./dataFrame";
+import { toPerspectiveData, type DataGridData } from "./dataFrame";
 
 export type { DataGridData, DataGridColumns } from "./dataFrame";
-export { toArrowIPC, columnsToArrow } from "./dataFrame";
+export { toArrowIPC, columnsToArrow, toPerspectiveData } from "./dataFrame";
 
 type PerspectiveModule = typeof import("@finos/perspective")["default"];
 
@@ -66,53 +66,84 @@ export interface DataGridProps {
   config?: Record<string, unknown>;
 }
 
+type PerspectiveTable = Awaited<ReturnType<Awaited<ReturnType<PerspectiveModule["worker"]>>["table"]>>;
+
 export function DataGrid({ data, height = 360, settings = false, plugin = "Datagrid", config }: DataGridProps) {
   const ref = useRef<HTMLPerspectiveViewerElement | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The <perspective-viewer> is a SINGLE persistent WASM element reused across data-prop
+  // changes. Its load()/restore()/delete() each touch a shared WASM model pointer; if a
+  // superseded render's teardown interleaves with a newer render's load(), that pointer is
+  // freed mid-use and Perspective throws "null pointer passed to rust" (the crash the user
+  // hit on summarize, whose silent auto-refresh re-renders on every agent tool-call tick).
+  // The fix: SERIALIZE every viewer operation through one promise chain so they can never
+  // overlap, gate each by a generation counter so a stale render no-ops, swap the table in
+  // place (never delete the viewer on a data change), and reuse ONE worker (the summarize
+  // tick storm would otherwise leak a worker per render).
+  const opChain = useRef<Promise<void>>(Promise.resolve());
+  const genRef = useRef(0);
+  const loadedTable = useRef<PerspectiveTable | null>(null);
+  const workerRef = useRef<Awaited<ReturnType<PerspectiveModule["worker"]>> | null>(null);
 
   useEffect(() => {
-    let disposed = false;
-    let viewerEl: HTMLPerspectiveViewerElement | null = null;
+    const myGen = ++genRef.current;
+    const stale = () => genRef.current !== myGen;
 
-    (async () => {
-      let table: Awaited<ReturnType<Awaited<ReturnType<PerspectiveModule["worker"]>>["table"]>> | null = null;
+    opChain.current = opChain.current.then(async () => {
+      if (stale() || !ref.current) return; // a newer render superseded us before our turn
+      let table: PerspectiveTable | null = null;
       try {
         const perspective = await loadPerspective();
-        if (disposed || !ref.current) return;
+        if (stale() || !ref.current) return;
 
-        const ipc = toArrowIPC(data);
-        const worker = await perspective.worker();
-        table = await worker.table(ipc.buffer as ArrayBuffer);
-        // The <perspective-viewer> element persists across data-prop changes, so a
-        // superseded effect (data changed mid-flight) must NOT load into the shared
-        // viewer — otherwise a slower prior query can clobber a newer one. Re-check the
-        // disposed flag after every await and free the orphaned table.
-        if (disposed) { await table.delete?.(); return; }
+        // Ingest via an explicit schema + JSON rows rather than re-encoded Arrow IPC:
+        // Perspective's WASM Arrow reader chokes on DuckDB Int64 columns ("null pointer
+        // passed to rust"), and its inference would pick i32 and overflow large ids.
+        // dataFrame.toPerspectiveData maps 64-bit ints → float and BigInt → number.
+        const { schema, rows } = toPerspectiveData(data);
+        if (!workerRef.current) workerRef.current = await perspective.worker();
+        // Create the table from the schema first (locks column types), then load rows.
+        // A `{col: type}` object is Perspective's documented "schema" table input, but the
+        // shipped .d.ts omits that overload — cast through unknown to the data-input type.
+        table = await workerRef.current.table(schema as unknown as Record<string, unknown[]>);
+        if (rows.length) await table.update(rows);
+        if (stale() || !ref.current) { await table.delete?.().catch(() => {}); return; }
 
-        viewerEl = ref.current;
-        await viewerEl.load(Promise.resolve(table));
-        // load() transferred the table into the shared viewer. If this effect was
-        // superseded mid-load, free what we just loaded — otherwise a slower prior query
-        // leaves its (now stale) table displayed in the viewer the newer effect also uses.
-        if (disposed) { await viewerEl.delete?.().catch(() => {}); return; }
-        await viewerEl.restore({
-          plugin,
-          theme: "Pro Dark",
-          settings,
-          ...(config ?? {}),
-        });
+        // Swap the table into the persistent viewer. We do NOT delete the viewer here — only
+        // the previously displayed table, once the new one is loaded — so the shared model
+        // pointer is never freed while a (serialized) load/restore could touch it.
+        await ref.current.load(Promise.resolve(table));
+        await ref.current.restore({ plugin, theme: "Pro Dark", settings, ...(config ?? {}) });
+        const prev = loadedTable.current;
+        loadedTable.current = table;
+        table = null; // ownership transferred to loadedTable; don't free in catch
+        await prev?.delete?.().catch(() => {});
+        if (!stale()) setError(null);
       } catch (e) {
-        if (!disposed) setError(e instanceof Error ? e.message : String(e));
         await table?.delete?.().catch(() => {});
+        if (!stale()) setError(e instanceof Error ? e.message : String(e));
       }
-    })();
-
-    return () => {
-      disposed = true;
-      // Best-effort teardown; viewer.delete() also frees the backing table.
-      viewerEl?.delete?.().catch(() => {});
-    };
+    }).catch(() => {});
+    // Bumping the generation in cleanup makes any queued-but-not-yet-run op for THIS data
+    // no-op. We deliberately do NOT tear the viewer down on a data change (that teardown
+    // racing the next load is the bug); the unmount effect below owns viewer disposal.
+    return () => { genRef.current++; };
   }, [data, settings, plugin, config]);
+
+  // True unmount only: enqueue viewer + table teardown at the TAIL of the op chain so it
+  // never interleaves with an in-flight load/restore. Capture the element on mount (refs are
+  // attached before effects run) since ref.current may be null by the time cleanup fires.
+  useEffect(() => {
+    const viewerEl = ref.current;
+    return () => {
+      genRef.current++;
+      opChain.current = opChain.current.then(async () => {
+        await loadedTable.current?.delete?.().catch(() => {});
+        loadedTable.current = null;
+        await viewerEl?.delete?.().catch(() => {});
+      }).catch(() => {});
+    };
+  }, []);
 
   if (error) {
     return (

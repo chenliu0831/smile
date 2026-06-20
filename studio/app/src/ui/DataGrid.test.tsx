@@ -1,6 +1,7 @@
 import { render } from "@testing-library/react";
+import * as arrow from "apache-arrow";
 import { tableFromIPC } from "apache-arrow";
-import { DataGrid, columnsToArrow, toArrowIPC } from "./DataGrid";
+import { DataGrid, columnsToArrow, toArrowIPC, toPerspectiveData } from "./DataGrid";
 
 const SAMPLE = {
   columns: ["#", "Candidate", "AUC", "Std (CV)", "Notes"],
@@ -29,7 +30,69 @@ test("toArrowIPC produces an Arrow Frame that round-trips back to the same data"
   expect(decoded.getChild("Candidate")?.get(1)).toBe("candidate_rf");
 });
 
+test("toPerspectiveData maps columns+rows to an explicit schema with safe JS values", () => {
+  const { schema, rows } = toPerspectiveData(SAMPLE);
+  // Plain JS numbers infer to Arrow Float64 → "float" (columnsToArrow can't know "#"
+  // is a logical integer). Strings → "string"; nulls don't change the inferred type.
+  expect(schema).toEqual({
+    "#": "float",
+    Candidate: "string",
+    AUC: "float",
+    "Std (CV)": "float",
+    Notes: "string",
+  });
+  expect(rows).toHaveLength(2);
+  expect(rows[0]).toMatchObject({ Candidate: "candidate_lgbm", AUC: 0.913 });
+  expect(rows[1].Notes).toBeNull();
+});
+
+// The crux of the "null pointer passed to rust" fix: DuckDB BIGINT → Arrow Int64 → JS
+// BigInt, which Perspective's WASM rejects. toPerspectiveData must declare such columns
+// "float" and emit plain numbers (no BigInt) so Perspective ingests them reliably.
+test("toPerspectiveData downcasts Arrow Int64 (BigInt) columns to float numbers", () => {
+  const table = arrow.tableFromArrays({
+    PassengerId: BigInt64Array.from([1n, 2n, 3n].map(BigInt)),
+    Fare: Float64Array.from([7.25, 71.28, 8.05]),
+  });
+  // sanity: the raw Arrow cell is a BigInt (the thing Perspective chokes on)
+  expect(typeof table.getChild("PassengerId")?.get(0)).toBe("bigint");
+
+  const { schema, rows } = toPerspectiveData(table);
+  expect(schema.PassengerId).toBe("float");
+  expect(schema.Fare).toBe("float");
+  for (const r of rows) {
+    expect(typeof r.PassengerId).toBe("number");
+    expect(typeof r.PassengerId).not.toBe("bigint");
+  }
+  expect(rows.map((r) => r.PassengerId)).toEqual([1, 2, 3]);
+});
+
 test("DataGrid mounts without throwing given a small dataset", () => {
   const { container } = render(<DataGrid data={SAMPLE} />);
   expect(container.querySelector("perspective-viewer")).toBeInTheDocument();
+});
+
+// Regression for the "null pointer passed to rust" crash (task #79): the <perspective-viewer>
+// is a SINGLE persistent WASM element reused across data-prop changes. The old effect deleted
+// the viewer in cleanup unawaited, racing the next render's load() under rapid churn (the
+// summarize auto-refresh re-runs the tracked query on every agent tool-call tick), freeing the
+// shared model pointer mid-use. The fix serializes viewer ops through one promise chain gated
+// by a generation counter and never deletes the viewer on a data change. WASM doesn't paint in
+// jsdom, but this asserts the React lifecycle contract: rapid re-renders + unmount never throw.
+test("DataGrid survives rapid data-prop churn and unmount without throwing", () => {
+  const variants = [
+    SAMPLE,
+    { columns: ["a", "b"], rows: [{ a: 1, b: "x" }, { a: 2, b: "y" }] },
+    { columns: ["only"], rows: [{ only: 42 }] },
+    columnsToArrow(SAMPLE),
+  ];
+  const { rerender, unmount, container } = render(<DataGrid data={variants[0]} />);
+  // Churn the prop faster than any async load could settle — the generation gate must make
+  // every superseded render no-op rather than touch a freed viewer.
+  for (let i = 1; i <= 12; i++) {
+    rerender(<DataGrid data={variants[i % variants.length]} />);
+  }
+  expect(container.querySelector("perspective-viewer")).toBeInTheDocument();
+  // Unmount mid-churn must enqueue teardown at the chain tail, not throw synchronously.
+  expect(() => unmount()).not.toThrow();
 });

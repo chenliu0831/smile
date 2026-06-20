@@ -32,3 +32,63 @@ export function toArrowIPC(data: DataGridData): Uint8Array {
   const table = data instanceof arrow.Table ? data : columnsToArrow(data);
   return arrow.tableToIPC(table, "file");
 }
+
+/** A Perspective column type (subset we emit). "integer" is i32; "float" is f64. */
+export type PerspectiveType = "integer" | "float" | "string" | "boolean" | "date" | "datetime";
+
+/** An explicit schema + row records — Perspective's reliable JSON ingest shape. */
+export interface PerspectiveData {
+  schema: Record<string, PerspectiveType>;
+  rows: Record<string, unknown>[];
+}
+
+/**
+ * Coerce a single Arrow cell to a Perspective-safe JS value. The key fix: DuckDB integers
+ * arrive as Arrow Int64 → JS BigInt, which Perspective's WASM rejects with "null pointer
+ * passed to rust". We convert every BigInt → Number (the column is declared "float"/f64,
+ * exact for |v| ≤ 2^53 — well beyond any realistic id/count/measurement). Arrow row objects
+ * also expose nested values (struct/list) as objects; stringify those for JSON safety.
+ */
+function safeCell(v: unknown): unknown {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "bigint") return Number(v);
+  if (typeof v === "boolean" || typeof v === "number" || typeof v === "string") return v;
+  return String(v); // struct/list/decimal/date objects → display string
+}
+
+/**
+ * Map an Arrow type to a Perspective column type. DuckDB emits integer columns as BIGINT →
+ * Arrow Int64, whose values routinely exceed i32 (e.g. id columns); Perspective "integer" is
+ * only i32, so ALL 64-bit ints map to "float" (f64) to avoid overflow while keeping numeric
+ * sort/aggregate. Narrow ints (≤32-bit) stay "integer".
+ */
+function perspectiveType(t: arrow.DataType): PerspectiveType {
+  if (arrow.DataType.isInt(t)) return (t as arrow.Int).bitWidth >= 64 ? "float" : "integer";
+  if (arrow.DataType.isFloat(t) || arrow.DataType.isDecimal(t)) return "float";
+  if (arrow.DataType.isBool(t)) return "boolean";
+  if (arrow.DataType.isTimestamp(t)) return "datetime";
+  if (arrow.DataType.isDate(t)) return "date";
+  return "string";
+}
+
+/**
+ * Convert tabular data to Perspective's JSON ingest shape. We feed Perspective an explicit
+ * schema + JSON rows (NOT re-encoded Arrow IPC) because its WASM Arrow reader chokes on
+ * common DuckDB output — notably Int64 columns ("null pointer passed to rust"). The explicit
+ * schema also prevents Perspective's own type inference from picking i32 and overflowing a
+ * large integer column. JSON ingest with a declared schema is the robust path.
+ */
+export function toPerspectiveData(data: DataGridData): PerspectiveData {
+  const table = data instanceof arrow.Table ? data : columnsToArrow(data);
+  const schema: PerspectiveData["schema"] = {};
+  for (const f of table.schema.fields) schema[f.name] = perspectiveType(f.type);
+  const names = table.schema.fields.map((f) => f.name);
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < table.numRows; i++) {
+    const row = table.get(i);
+    const out: Record<string, unknown> = {};
+    for (const name of names) out[name] = safeCell(row?.[name]);
+    rows.push(out);
+  }
+  return { schema, rows };
+}
