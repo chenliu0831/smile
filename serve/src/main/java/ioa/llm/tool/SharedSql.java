@@ -241,6 +241,36 @@ public final class SharedSql {
     }
 
     /**
+     * Returns the columns of EVERY user table/view in ONE query via DuckDB's
+     * {@code information_schema.columns}, ordered so each table's columns stay in ordinal
+     * order. This replaces the schema rail's N+1 {@code DESCRIBE}-per-table (each of which
+     * took the shared instance monitor separately, serializing behind agent SQL); the rail
+     * now costs a single lock acquisition. Returns an insertion-ordered map table -> columns.
+     */
+    public static java.util.LinkedHashMap<String, List<Column>> allColumns() throws ToolException {
+        try {
+            Handles h = handles();
+            Object df = h.query.invoke(h.sql,
+                "SELECT table_name, column_name, data_type FROM information_schema.columns " +
+                "ORDER BY table_name, ordinal_position");
+            int n = (int) h.dfNrow.invoke(df);
+            List<String> tnames = columnAsStrings(h, df, "table_name");
+            List<String> cnames = columnAsStrings(h, df, "column_name");
+            List<String> ctypes = columnAsStrings(h, df, "data_type");
+            var out = new java.util.LinkedHashMap<String, List<Column>>();
+            for (int i = 0; i < n; i++) {
+                out.computeIfAbsent(tnames.get(i), k -> new ArrayList<>())
+                   .add(new Column(cnames.get(i), i < ctypes.size() ? ctypes.get(i) : ""));
+            }
+            return out;
+        } catch (InvocationTargetException e) {
+            throw toToolException(e, "SQL allColumns failed");
+        } catch (ReflectiveOperationException e) {
+            throw toToolException(e, "SQL bridge unavailable");
+        }
+    }
+
+    /**
      * Returns a bounded, column-oriented projection of a table for charting: column name ->
      * list of values (numbers preserved as Number, everything else as String for JSON
      * safety). {@code cols} is the table's columns (from {@link #describe}); {@code rows}

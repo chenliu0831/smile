@@ -51,16 +51,14 @@ public class TablesResource {
     @Produces(MediaType.APPLICATION_JSON)
     public Response list() {
         try {
+            // tables() filters internal tables; allColumns() reads every column in ONE query
+            // (vs the old N+1 DESCRIBE-per-table, each taking the shared lock separately).
+            var byTable = SharedSql.allColumns();
             List<TableInfo> out = new ArrayList<>();
             for (String name : SharedSql.tables()) {
                 List<ColumnInfo> cols = new ArrayList<>();
-                try {
-                    for (SharedSql.Column c : SharedSql.describe(name)) {
-                        cols.add(new ColumnInfo(c.name(), c.type()));
-                    }
-                } catch (ToolException describeErr) {
-                    // A table we can list but not describe (rare) still appears, columns empty.
-                    LOG.debugf("describe(%s) failed: %s", name, describeErr.getMessage());
+                for (SharedSql.Column c : byTable.getOrDefault(name, List.of())) {
+                    cols.add(new ColumnInfo(c.name(), c.type()));
                 }
                 out.add(new TableInfo(name, cols, SqlLineage.definitionOf(name)));
             }
