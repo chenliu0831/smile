@@ -21,6 +21,7 @@ import {
 import { DataGrid } from "./DataGrid";
 import { agentSqlStatements, freshAgentSql } from "./agentSql";
 import { canLoadDataset } from "../daemon/dataset";
+import { selectIsBusy } from "../store/selectors";
 
 /** Statements that return a result set we can render in the grid. */
 const QUERY_SHAPE = /^\s*(select|with|from|table|values|pivot|unpivot|describe|show|summarize)\b/i;
@@ -189,7 +190,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   // replied with prose or a clarifying question), clear the wait so Ask/Fix don't stick.
   useEffect(() => {
     if (!awaitingAgentSql) return;
-    const turnInFlight = state.streaming || state.openGates.length > 0;
+    const turnInFlight = selectIsBusy(state);
     const ourTurnEnded = !turnInFlight && state.turns.length > agentTurnBaselineRef.current;
     if (!ourTurnEnded) return; // still waiting for the turn we triggered to complete
     const fresh = freshAgentSql(sqlStatements, agentSqlBaselineRef.current, "last");
@@ -203,7 +204,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
 
   // Send a prompt to Clair and arm injection of its resulting SQL back into the editor.
   const askClair = useCallback((prompt: string) => {
-    if (state.streaming || state.openGates.length > 0) return; // chat busy; UI also disables
+    if (selectIsBusy(state)) return; // chat busy; UI also disables
     agentSqlBaselineRef.current = sqlStatements.length;
     agentTurnBaselineRef.current = state.turns.length;
     setAwaitingAgentSql(true);
@@ -321,7 +322,7 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
   // A SELECT/WITH (or FROM-first) statement can be saved as a table.
   const canSave = /^\s*(select|with|from|table|values)\b/i.test(sql);
   // Clair handles one turn at a time; disable Ask/Fix while a turn streams or a gate is open.
-  const chatBusy = state.streaming || state.openGates.length > 0 || awaitingAgentSql;
+  const chatBusy = selectIsBusy(state) || awaitingAgentSql;
 
   // "Ask Clair" button → open the inline NL request bar (no blocking dialog).
   const onAsk = () => setPromptBar({ kind: "ask", value: "" });

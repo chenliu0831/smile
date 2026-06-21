@@ -21,18 +21,19 @@ import { ViewRail, type CanvasView, type ViewDef } from "./ViewRail";
 import { Timeline } from "./Timeline";
 import { Canvas } from "./Canvas";
 import { SqlConsole } from "./SqlConsole";
+import { selectHasDataset, selectLeaderboard } from "../store/selectors";
 
 function WorkspaceInner() {
   const c = useRunContext();
   const { state, datasetInfo, dataset, canLoadDataset, addData, sendMessage } = c;
 
-  const hasDataset = !!datasetInfo || !!dataset;
+  // Derived facts come from shared selectors (one definition each — see store/selectors.ts),
+  // applied to the controller's already-reactive fields, not re-computed inline here and
+  // again in Topbar/CanvasRegion.
+  const hasDataset = selectHasDataset(datasetInfo, dataset);
   const hasArtifacts = Object.keys(state.artifacts).length > 0;
   const hasStages = state.stages.length > 0;
-  // Find the leaderboard by KIND, not by ref: the real daemon emits it under ref
-  // "candidates" (the stage id), only the mock uses ref "leaderboard". Keying on the ref
-  // left the Leaderboard view permanently disabled and never auto-revealed on real runs.
-  const leaderboard = Object.values(state.artifacts).find((a) => a.kind === "leaderboard");
+  const leaderboard = selectLeaderboard(state);
   // The "Data" view IS the SQL console (Phase 2): it needs the daemon's /sql endpoint (the
   // shared DuckDB session). It works with a daemon even before a file is "loaded" — the
   // agent may have created tables, and the user can query the input file directly.
@@ -187,7 +188,7 @@ function CanvasRegion({ view, injectedSql }: { view: CanvasView; injectedSql?: {
     }
     case "leaderboard": {
       // Match by kind (the real daemon's ref is "candidates", not "leaderboard").
-      const lb = artifacts.find((a) => a.kind === "leaderboard");
+      const lb = selectLeaderboard(state);
       return <Canvas artifacts={lb ? [lb] : artifacts} />;
     }
     case "overview":

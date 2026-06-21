@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useRunContext } from "../automl/RunContext";
 import { SettingsDialog } from "./SettingsDialog";
+import { selectHasDataset } from "../store/selectors";
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -15,6 +16,7 @@ function formatSize(bytes: number): string {
 
 export function Topbar() {
   const { state, dataset, datasetInfo, canLoadDataset, addData, mode } = useRunContext();
+  const hasDataset = selectHasDataset(datasetInfo, dataset);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +43,8 @@ export function Topbar() {
       <span className="goal">{state.goal || "AutoML"}</span>
 
       {/* Current-dataset clue — authoritative: prefer the daemon's detected dataset (with
-          dimensions, reflects what the agent actually analyzes) and fall back to the
-          in-app loaded file. Consistent with Workspace's hasDataset = datasetInfo || dataset. */}
+          dimensions, reflects what the agent actually analyzes) and fall back to the in-app
+          loaded file. The hasDataset precedence is the shared selectHasDataset selector. */}
       {datasetInfo ? (
         <span className="dataset-chip" title={`The agent is working with input/${datasetInfo.fileName}`}>
           📄 {datasetInfo.fileName} <em>{datasetInfo.nrow.toLocaleString()}×{datasetInfo.ncol}</em>
@@ -74,7 +76,7 @@ export function Topbar() {
         disabled={loading || !canLoadDataset}
         title={canLoadDataset ? "Add a dataset (CSV/Parquet/JSON) — no restart" : "Available in the desktop app"}
       >
-        {loading ? "Adding…" : (datasetInfo || dataset) ? "Add data" : "Add data"}
+        {loading ? "Adding…" : hasDataset ? "Add data" : "Add data"}
       </button>
 
       {/* "Working" only while a turn is actually streaming; otherwise reflect that the
