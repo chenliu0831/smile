@@ -31,7 +31,8 @@ The project follows a hierarchical structure. Always check `base` before adding 
 - `deep/`: Deep learning libraries.
 - `plot/`: Data visualization libraries.
 - `kotlin/`: Kotlin API with corresponding language paradigms.
-- `serve/`: Machine learning inference service with Quarkus.
+- `serve/`: Machine learning inference service with Quarkus; also hosts the Smile Studio daemon.
+- `studio/`: Smile Studio — the Tauri frontend (Webview + Rust Shell) and its daemon seam. **See `studio/AGENTS.md`** before editing the wire contract (`studio/contract/`) or the daemon↔webview protocol; run `studio/contract/verify.sh` to check cross-language conformance.
 
 ## 📝 Coding Standards
 - **Style:** Follow Google Java Style Guide.
