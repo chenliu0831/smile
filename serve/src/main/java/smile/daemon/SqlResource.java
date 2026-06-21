@@ -181,7 +181,8 @@ public class SqlResource {
         Future<Response> future = POOL.submit(() -> {
             // Guard collisions explicitly so we can return a clear 409 (and not even attempt
             // the destructive path) when the name is taken and overwrite wasn't requested.
-            if (!overwrite && SharedSql.tables().stream().anyMatch(t -> t.equalsIgnoreCase(name))) {
+            // SessionTables owns the case-insensitive existence check (shared with DataResource).
+            if (!overwrite && SessionTables.exists(name)) {
                 return error(Response.Status.CONFLICT,
                         "A table named '" + name + "' already exists. Choose another name or overwrite it.");
             }

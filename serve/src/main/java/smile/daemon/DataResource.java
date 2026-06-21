@@ -25,7 +25,6 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
-import ioa.llm.tool.SharedSql;
 
 /**
  * Serves the backing data for chart {@code ArrowRef}s as column-oriented JSON (the shape the
@@ -67,12 +66,12 @@ public class DataResource {
     @Path("/{ref}")
     @Produces(MediaType.APPLICATION_JSON)
     public Map<String, ? extends List<?>> table(@PathParam("ref") String ref, @QueryParam("rows") Integer rows) {
-        if (isSessionTable(ref)) {
+        if (SessionTables.existsQuietly(ref)) {
             // The ref names a real session table — a projection failure here is a genuine
             // error (e.g. an unmappable column type), NOT "unknown ref"; surface it as 500
             // rather than masquerading as a 404.
             try {
-                return SharedSql.columnTable(ref, SharedSql.describe(ref), clampRows(rows));
+                return SessionTables.columnTable(ref, SessionTables.columns(ref), clampRows(rows));
             } catch (Throwable t) {
                 LOG.errorf("Failed to project session table %s: %s", ref, t.getMessage());
                 throw new jakarta.ws.rs.InternalServerErrorException(
@@ -82,16 +81,6 @@ public class DataResource {
         var demo = DEMO.get(ref);
         if (demo != null) return demo;
         throw new NotFoundException("Unknown data ref: " + ref);
-    }
-
-    /** Whether {@code ref} is a plain identifier naming an existing shared-session table. */
-    private boolean isSessionTable(String ref) {
-        if (ref == null || !ref.matches("[A-Za-z_][A-Za-z0-9_]*")) return false;
-        try {
-            return SharedSql.tables().stream().anyMatch(t -> t.equalsIgnoreCase(ref));
-        } catch (Throwable t) {
-            return false; // no session / bridge unavailable → fall through to demo/404
-        }
     }
 
     private static int clampRows(Integer rows) {

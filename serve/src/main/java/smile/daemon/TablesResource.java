@@ -53,9 +53,9 @@ public class TablesResource {
         try {
             // tables() filters internal tables; allColumns() reads every column in ONE query
             // (vs the old N+1 DESCRIBE-per-table, each taking the shared lock separately).
-            var byTable = SharedSql.allColumns();
+            var byTable = SessionTables.allColumns();
             List<TableInfo> out = new ArrayList<>();
-            for (String name : SharedSql.tables()) {
+            for (String name : SessionTables.list()) {
                 List<ColumnInfo> cols = new ArrayList<>();
                 for (SharedSql.Column c : byTable.getOrDefault(name, List.of())) {
                     cols.add(new ColumnInfo(c.name(), c.type()));

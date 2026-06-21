@@ -89,7 +89,7 @@ final class DataContext {
     /** The shared-session table names, or empty on any error (context is best-effort). */
     private static List<String> sharedTables() {
         try {
-            List<String> all = SharedSql.tables();
+            List<String> all = SessionTables.list();
             return all.size() > MAX_TABLES ? all.subList(0, MAX_TABLES) : all;
         } catch (Throwable t) {
             return List.of();
@@ -104,7 +104,7 @@ final class DataContext {
         String cached = COLUMN_CACHE.get(table);
         if (cached != null) return cached;
         try {
-            List<SharedSql.Column> cols = SharedSql.describe(table);
+            List<SharedSql.Column> cols = SessionTables.columns(table);
             if (cols.isEmpty()) return "";
             String list = cols.stream().limit(MAX_COLS_LISTED)
                     .map(c -> c.name() + ":" + c.type())
