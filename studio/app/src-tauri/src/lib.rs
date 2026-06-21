@@ -15,6 +15,15 @@
 //!
 //! Deployment paths (daemon jar, `smile.home`, the agent working directory) come from
 //! env vars with dev-friendly defaults, since they are not user-facing settings.
+//!
+//! This single file groups a few concerns, in reading order: (1) the daemon JVM
+//! **invocation builder** (`build_daemon_invocation` + `token_env_var`) — pure and
+//! unit-tested; (2) **daemon supervision** (`DaemonState`/`RunningDaemon` + `start_daemon`/
+//! `stop_daemon`/`daemon_info`) — the one kill path is `DaemonState::kill` (or `kill_taken`
+//! when a caller already holds the lock); (3) the **LLM config store** (`get`/`set_llm_config`);
+//! (4) **dataset filesystem ops** (`load_dataset`/`stage_dataset`); (5) the Tauri `run`
+//! bootstrap. The four DTOs crossing the `invoke` boundary are validated against the shared
+//! JSON Schema in `tests/contract_conformance.rs`.
 
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
@@ -155,6 +164,24 @@ fn generate_session_token() -> String {
 #[derive(Default)]
 pub struct DaemonState(Mutex<Option<RunningDaemon>>);
 
+impl DaemonState {
+    /// Stop and forget the running daemon, if any. Locks internally — the single kill path
+    /// for the lifecycle commands (stop_daemon, load_dataset) and the window-close handler,
+    /// which previously each open-coded the same take()+kill() idiom. A failed kill is ignored
+    /// (best-effort teardown).
+    fn kill(&self) {
+        kill_taken(self.0.lock().unwrap().take());
+    }
+}
+
+/// Kill a daemon already taken out of the state (for callers holding the lock guard, e.g.
+/// start_daemon's stale-dir branch, which must not re-lock the mutex it already holds).
+fn kill_taken(daemon: Option<RunningDaemon>) {
+    if let Some(mut d) = daemon {
+        let _ = d.child.kill();
+    }
+}
+
 pub struct RunningDaemon {
     child: Child,
     port: u16,
@@ -256,9 +283,8 @@ fn start_daemon(
             if d.working_dir == working_dir {
                 return Ok(DaemonInfo { port: d.port, token: d.token.clone(), attached: true });
             }
-            if let Some(mut stale) = guard.take() {
-                let _ = stale.child.kill();
-            }
+            // Stale dir: kill while we still hold the guard (can't re-lock via state.kill()).
+            kill_taken(guard.take());
         }
     }
 
@@ -325,9 +351,7 @@ fn start_daemon(
 
 #[tauri::command]
 fn stop_daemon(state: State<DaemonState>) {
-    if let Some(mut d) = state.0.lock().unwrap().take() {
-        let _ = d.child.kill();
-    }
+    state.kill();
 }
 
 /// Result of loading a dataset: the working directory the daemon should run in
@@ -377,9 +401,7 @@ fn load_dataset(
 
     // A new dataset means a fresh session — stop any running daemon so the next
     // start_daemon launches in the new working dir.
-    if let Some(mut d) = state.0.lock().unwrap().take() {
-        let _ = d.child.kill();
-    }
+    state.kill();
 
     Ok(LoadedDataset {
         working_dir: base.to_string_lossy().to_string(),
@@ -446,9 +468,7 @@ pub fn run() {
             // Kill the daemon when the main window closes.
             if let tauri::WindowEvent::Destroyed = event {
                 if let Some(state) = window.try_state::<DaemonState>() {
-                    if let Some(mut d) = state.0.lock().unwrap().take() {
-                        let _ = d.child.kill();
-                    }
+                    state.kill();
                 }
             }
         })
