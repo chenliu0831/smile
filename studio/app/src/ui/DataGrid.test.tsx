@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render } from "@testing-library/react";
 import * as arrow from "apache-arrow";
 import { tableFromIPC } from "apache-arrow";
@@ -94,5 +95,20 @@ test("DataGrid survives rapid data-prop churn and unmount without throwing", () 
   }
   expect(container.querySelector("perspective-viewer")).toBeInTheDocument();
   // Unmount mid-churn must enqueue teardown at the chain tail, not throw synchronously.
+  expect(() => unmount()).not.toThrow();
+});
+
+// StrictMode (dev) runs setup→cleanup→setup on the SAME mounted node. The viewer-disposal
+// teardown must NOT fire on that simulated unmount (it would free the live viewer's WASM
+// model and the next render's load() would hit a freed pointer — the original crash). This
+// guards the regression the adversarial review caught: a bare render() never exercises it.
+test("DataGrid under StrictMode (simulated unmount→remount) mounts without throwing", () => {
+  const { rerender, unmount, container } = render(
+    <StrictMode><DataGrid data={SAMPLE} /></StrictMode>,
+  );
+  expect(container.querySelector("perspective-viewer")).toBeInTheDocument();
+  // a churn after the StrictMode double-invoke must still be safe
+  rerender(<StrictMode><DataGrid data={{ columns: ["a"], rows: [{ a: 1 }] }} /></StrictMode>);
+  expect(container.querySelector("perspective-viewer")).toBeInTheDocument();
   expect(() => unmount()).not.toThrow();
 });

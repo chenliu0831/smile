@@ -84,8 +84,21 @@ export function DataGrid({ data, height = 360, settings = false, plugin = "Datag
   const genRef = useRef(0);
   const loadedTable = useRef<PerspectiveTable | null>(null);
   const workerRef = useRef<Awaited<ReturnType<PerspectiveModule["worker"]>> | null>(null);
+  // A pending viewer-disposal timer (see the unmount effect). React StrictMode (dev) runs
+  // setup→cleanup→setup on the SAME mounted node, so the unmount cleanup fires on a
+  // simulated unmount; disposing the shared viewer there would free its WASM model while the
+  // component is still mounted (the next data effect's load() would then hit a freed pointer —
+  // the very "null pointer passed to rust" crash). So disposal is DEFERRED to a macrotask and
+  // CANCELLED if the data effect re-runs (a real remount re-runs it synchronously after).
+  const disposeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // A (re)mount/data-change ran: cancel any pending disposal from a StrictMode simulated
+    // unmount so we never free the viewer that this live render is about to use.
+    if (disposeTimer.current !== null) {
+      clearTimeout(disposeTimer.current);
+      disposeTimer.current = null;
+    }
     const myGen = ++genRef.current;
     const stale = () => genRef.current !== myGen;
 
@@ -130,18 +143,29 @@ export function DataGrid({ data, height = 360, settings = false, plugin = "Datag
     return () => { genRef.current++; };
   }, [data, settings, plugin, config]);
 
-  // True unmount only: enqueue viewer + table teardown at the TAIL of the op chain so it
-  // never interleaves with an in-flight load/restore. Capture the element on mount (refs are
-  // attached before effects run) since ref.current may be null by the time cleanup fires.
+  // Viewer/table/worker disposal. DEFERRED to a macrotask so a React StrictMode simulated
+  // unmount (which immediately remounts) cancels it (via the data effect above) instead of
+  // freeing the live viewer's WASM model out from under the next render. On a REAL unmount no
+  // remount follows, so the timer fires and tears down at the TAIL of the op chain (never
+  // interleaving with an in-flight load/restore). Capture the element now (refs are attached
+  // before effects run) since ref.current may be null by the time the timer fires.
   useEffect(() => {
     const viewerEl = ref.current;
     return () => {
       genRef.current++;
-      opChain.current = opChain.current.then(async () => {
-        await loadedTable.current?.delete?.().catch(() => {});
-        loadedTable.current = null;
-        await viewerEl?.delete?.().catch(() => {});
-      }).catch(() => {});
+      disposeTimer.current = setTimeout(() => {
+        disposeTimer.current = null;
+        const worker = workerRef.current;
+        workerRef.current = null;
+        opChain.current = opChain.current.then(async () => {
+          await loadedTable.current?.delete?.().catch(() => {});
+          loadedTable.current = null;
+          await viewerEl?.delete?.().catch(() => {});
+          // Terminate the reused worker (Web Worker + WASM heap) so a real unmount doesn't
+          // leak it; a remount lazily creates a fresh one (workerRef was nulled above).
+          await worker?.terminate?.().catch?.(() => {});
+        }).catch(() => {});
+      }, 0);
     };
   }, []);
 

@@ -30,9 +30,10 @@ test("clicking through a summarize turn renders the agent's real summary in the 
 
   // the agent's REAL captured summary prose renders (titanic-specific facts). The summary is
   // a markdown table, so the text is split across many DOM nodes — assert on the whole
-  // rendered document text rather than a single text node.
+  // rendered document text rather than a single text node. Use a prose-only phrase (the bare
+  // case-insensitive "titanic" would also match the "[Describing table: titanic]" echo).
   await waitFor(
-    () => expect(document.body.textContent || "").toMatch(/891|Titanic Dataset Summary|Missing values/i),
+    () => expect(document.body.textContent || "").toMatch(/Titanic Dataset Summary|891 rows|Missing values/),
     { timeout: 5000 },
   );
   // and the chat returns to a ready state (not stuck streaming)

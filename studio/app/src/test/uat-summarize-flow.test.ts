@@ -39,10 +39,17 @@ test("replaying the summarize run folds into a completed session with agent outp
   const roles = state.turns.map((t) => t.role);
   expect(roles).toContain("user");
   expect(roles).toContain("agent");
-  // the agent turn accumulated real summary prose (the captured agent-chunks)
-  const agentText = state.turns.filter((t) => t.role === "agent").map((t) => t.text).join("");
+  // the agent turn accumulated real summary PROSE — strip the bracketed tool-status echoes
+  // ("[Executing SQL statement]", "[Describing table: titanic]") first so the assertion can't
+  // pass on plumbing alone, and match a prose-only phrase (not the bare "titanic" that also
+  // appears in a status echo).
+  const agentText = state.turns
+    .filter((t) => t.role === "agent")
+    .map((t) => t.text)
+    .join("")
+    .replace(/\[[^\]]*\]/g, ""); // drop "[…]" status echoes
   expect(agentText.length).toBeGreaterThan(200);
-  expect(agentText).toMatch(/891|Titanic|Missing|BIGINT/i);
+  expect(agentText).toMatch(/Titanic Dataset Summary|891 rows|Missing/);
 });
 
 test("the agent's SQL tool-calls are captured in the run state", async () => {

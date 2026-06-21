@@ -97,13 +97,20 @@ function arrowResponse(base: string): Response {
 const jsonResponse = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
-/** Map a SELECT statement to the captured Arrow fixture that answers it (by content). */
-function arrowFixtureFor(sql: string): string {
+/**
+ * Map a SELECT statement to the captured Arrow fixture that answers it (by content), or null
+ * if the query references a table the fixtures don't know about — the daemon would return a
+ * 400 {error} for an unknown table, so the harness must too (rather than handing back a wrong
+ * Arrow table and letting a broken error path pass silently).
+ */
+function arrowFixtureFor(sql: string): string | null {
   const s = sql.toLowerCase();
   if (/group by\s+pclass/.test(s)) return "sql-groupby";
   if (/avg\(survived\)/.test(s) || /group by\s+sex/.test(s)) return "sql-survival";
   if (/passengerid.*order by\s+fare/.test(s)) return "sql-bigids";
-  return "sql-select-all"; // default SELECT (incl. SELECT *)
+  // Known data sources in the fixtures: the `titanic` table and direct read_csv/parquet/json.
+  if (/\btitanic\b/.test(s) || /read_(csv|parquet|json)\s*\(/.test(s)) return "sql-select-all";
+  return null; // unknown table/source → caller returns the captured 400
 }
 
 /**
@@ -133,9 +140,11 @@ export const fixtureFetch: typeof fetch = (async (input: RequestInfo | URL, init
     const kw = sql.trim().toLowerCase();
     const isQuery = /^(select|with|from|table|values|pivot|unpivot|describe|show|summarize)\b/.test(kw);
     if (isQuery) {
-      // Unknown-table SELECT → 400 {error} (the captured sql-error.json shape).
-      if (/no_such_table/.test(kw)) return jsonResponse(readJson("sql-error.json").body, 400);
-      return arrowResponse(arrowFixtureFor(sql));
+      // A query against a table the fixtures don't know → 400 {error}, exactly as the real
+      // daemon does for an unknown table (so a broken UI error path can't pass silently).
+      const fixture = arrowFixtureFor(sql);
+      if (fixture === null) return jsonResponse(readJson("sql-error.json").body, 400);
+      return arrowResponse(fixture);
     }
     if (/^(insert|update|delete)\b/.test(kw)) {
       return jsonResponse({ kind: "dml", ok: true, rowsAffected: 1, tables: [] });

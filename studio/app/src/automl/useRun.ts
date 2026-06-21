@@ -11,7 +11,7 @@ import {
   type LoadedDataset,
 } from "../daemon/dataset";
 import { fetchDatasetInfo, type DatasetInfo } from "../daemon/datasetInfo";
-import { runSql } from "../daemon/sql";
+import { runSql, SqlRunError } from "../daemon/sql";
 import type { RunConnection } from "../daemon/wsClient";
 import type { DaemonMessage } from "../daemon/protocol";
 
@@ -169,16 +169,35 @@ export function useRun(connect: typeof connectRun = connectRun): RunController {
       }
       const path = await pickDatasetFile();
       if (!path) return null; // cancelled
-      // Stage into the running daemon's input/ so the agent can read ./input/<file>
-      // (ADR-0005) — best-effort; the in-session table below is the primary access path.
-      await stageDataset(path).catch(() => {/* not fatal: the table import still works */});
-      const name = tableNameForPath(path);
-      // Fast in-session import (no restart): CREATE OR REPLACE so re-adding a file just
-      // refreshes it rather than erroring on a name collision.
-      await runSql(base, `CREATE OR REPLACE TABLE "${name}" AS SELECT * FROM ${readerForPath(path)}`);
-      // Reflect it in the UI without a restart: re-fetch the daemon's dataset insights.
+      const reader = readerForPath(path);
+      // Import FIRST (before staging the file) so a failed import never orphans a copied
+      // input/ file. NON-DESTRUCTIVE: plain CREATE TABLE; on a name collision (a table Clair
+      // or a prior import created) disambiguate with a numeric suffix rather than silently
+      // clobbering the agent's table with CREATE OR REPLACE.
+      const baseName = tableNameForPath(path);
+      let name = baseName;
+      for (let attempt = 1; ; attempt++) {
+        try {
+          await runSql(base, `CREATE TABLE "${name}" AS SELECT * FROM ${reader}`);
+          break;
+        } catch (e) {
+          if (e instanceof SqlRunError && /already exists/i.test(e.message) && attempt <= 50) {
+            name = `${baseName}_${attempt + 1}`; // customers, customers_2, customers_3, …
+            continue;
+          }
+          throw e;
+        }
+      }
+      // Stage the file into the running daemon's input/ so the agent can also read it by the
+      // ./input/<file> convention (ADR-0005). Best-effort: the imported table is the primary
+      // access path, so a staging failure must not fail the add.
+      await stageDataset(path).catch(() => {/* table import already succeeded */});
+      // Reflect it without a restart: re-fetch the daemon's dataset insights, and set a local
+      // fallback so the chip lights even if /dataset's file-based detection doesn't surface
+      // the imported session table.
       const info = await fetchDatasetInfo(base);
-      setDatasetInfo(info);
+      if (info) setDatasetInfo(info);
+      else setDataset({ workingDir: workingDirRef.current, fileName: name, sizeBytes: 0 });
       return name;
     },
     loadDataset: loadDatasetImpl,
