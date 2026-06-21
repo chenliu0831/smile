@@ -1,0 +1,50 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "fileName",
+    "nrow",
+    "ncol",
+    "columns",
+    "preview"
+  ],
+  "properties": {
+    "fileName": {
+      "type": "string"
+    },
+    "nrow": {
+      "type": "number"
+    },
+    "ncol": {
+      "type": "number"
+    },
+    "columns": {
+      "type": "array",
+      "items": {
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "name",
+          "type"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "patternProperties": {
+        "^(.*)$": {
+          "type": "array",
+          "items": {}
+        }
+      }
+    }
+  }
+}

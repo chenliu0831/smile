@@ -8,6 +8,7 @@
  * (the daemon verifies it on connect, ADR-0002).
  */
 import type { DaemonMessage } from "./protocol";
+import { DaemonMessage as DaemonMessageSchema, assertValidInDev } from "@smile/contract";
 import { httpBaseFromWs } from "./datasetInfo";
 
 type Listener = (msg: DaemonMessage) => void;
@@ -52,6 +53,10 @@ export class WebSocketRunConnection implements RunConnection {
     this.ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data as string) as DaemonMessage;
+        // Dev-only contract check: warns if a daemon frame doesn't match the shared schema
+        // (the front/back drift detector). No-op in prod and never throws — a trusted
+        // loopback daemon adding a field must not break an older Webview (forward-compat).
+        assertValidInDev(DaemonMessageSchema, msg, "ws/run inbound");
         for (const l of this.listeners) l(msg);
       } catch {
         // Ignore malformed frames.

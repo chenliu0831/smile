@@ -1,0 +1,12 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "error"
+  ],
+  "properties": {
+    "error": {
+      "type": "string"
+    }
+  }
+}

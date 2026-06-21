@@ -1,0 +1,20 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "working_dir",
+    "file_name",
+    "size_bytes"
+  ],
+  "properties": {
+    "working_dir": {
+      "type": "string"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "size_bytes": {
+      "type": "number"
+    }
+  }
+}

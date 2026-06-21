@@ -389,11 +389,13 @@ fn load_dataset(
 }
 
 /// Result of staging a dataset into the RUNNING daemon's working dir (no restart).
+/// Fields are `pub` for parity with `LoadedDataset` and so the contract-conformance test
+/// can construct one (the shape is validated against the shared JSON Schema).
 #[derive(serde::Serialize)]
 pub struct StagedDataset {
     /// The file name as the agent sees it under ./input/ (ADR-0005 convention).
-    file_name: String,
-    size_bytes: u64,
+    pub file_name: String,
+    pub size_bytes: u64,
 }
 
 /// Copies a chosen dataset file into the ALREADY-RUNNING daemon's `input/` folder so the

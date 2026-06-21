@@ -1,0 +1,24 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "provider",
+    "base_url",
+    "model",
+    "has_key"
+  ],
+  "properties": {
+    "provider": {
+      "type": "string"
+    },
+    "base_url": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string"
+    },
+    "has_key": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "name",
+    "select"
+  ],
+  "properties": {
+    "name": {
+      "type": "string"
+    },
+    "select": {
+      "type": "string"
+    },
+    "overwrite": {
+      "type": "boolean"
+    }
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "anyOf": [
+    {
+      "additionalProperties": true,
+      "type": "object",
+      "required": [
+        "type",
+        "text"
+      ],
+      "properties": {
+        "type": {
+          "const": "user-message",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": true,
+      "type": "object",
+      "required": [
+        "type",
+        "gateId",
+        "answer"
+      ],
+      "properties": {
+        "type": {
+          "const": "answer",
+          "type": "string"
+        },
+        "gateId": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": true,
+      "type": "object",
+      "required": [
+        "type",
+        "gateId"
+      ],
+      "properties": {
+        "type": {
+          "const": "approve",
+          "type": "string"
+        },
+        "gateId": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": true,
+      "type": "object",
+      "required": [
+        "type",
+        "gateId"
+      ],
+      "properties": {
+        "type": {
+          "const": "reject",
+          "type": "string"
+        },
+        "gateId": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "additionalProperties": true,
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "const": "cancel-run",
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

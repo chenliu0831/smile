@@ -42,6 +42,9 @@ dependencies {
     testImplementation("io.quarkus:quarkus-junit5")
     testImplementation("io.quarkus:quarkus-test-h2")
     testImplementation("io.rest-assured:rest-assured:6.0.0")
+    // Validates the daemon's wire records against the shared JSON Schema generated from
+    // @smile/contract (Option B). Catches Java <-> contract drift in CI without codegen.
+    testImplementation("com.networknt:json-schema-validator:3.0.0")
 
     // JaCoCo aggregated report
     jacocoAggregation(project(":base"))

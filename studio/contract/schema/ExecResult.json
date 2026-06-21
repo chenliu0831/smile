@@ -1,0 +1,34 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "kind",
+    "ok",
+    "rowsAffected",
+    "tables"
+  ],
+  "properties": {
+    "kind": {
+      "type": "string"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "rowsAffected": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

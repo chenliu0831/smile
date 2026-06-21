@@ -1,0 +1,20 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "port",
+    "token",
+    "attached"
+  ],
+  "properties": {
+    "port": {
+      "type": "number"
+    },
+    "token": {
+      "type": "string"
+    },
+    "attached": {
+      "type": "boolean"
+    }
+  }
+}

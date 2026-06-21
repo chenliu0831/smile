@@ -1,0 +1,25 @@
+{
+  "name": "@smile/contract",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The single source of truth for the Smile Daemon <-> Webview wire contract (DaemonMessage, REST shapes) and the Shell <-> Webview Tauri command payloads. Authored once in TypeBox; the canonical JSON Schema is generated from it and consumed by the Java daemon and the Rust Shell (Option B of the architecture review).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "gen": "tsx scripts/gen-schema.ts",
+    "gen:check": "tsx scripts/gen-schema.ts --check",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.33"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.8"
+  }
+}

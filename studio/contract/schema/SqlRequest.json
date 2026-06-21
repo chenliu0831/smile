@@ -1,0 +1,15 @@
+{
+  "additionalProperties": true,
+  "type": "object",
+  "required": [
+    "sql"
+  ],
+  "properties": {
+    "sql": {
+      "type": "string"
+    },
+    "maxRows": {
+      "type": "number"
+    }
+  }
+}
