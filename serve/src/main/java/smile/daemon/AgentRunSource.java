@@ -171,29 +171,20 @@ public class AgentRunSource implements RunSource {
             @Override
             public void onQuestion(Question question) {
                 String gateId = "g-" + seq.incrementAndGet();
-                String qHeader = question.header != null ? question.header : "";
                 var protoQ = new DaemonMessage.Question(
-                        gateId, qHeader, question.question, question.choices, question.multiSelect);
-                String header = question.header != null ? question.header : "Needs your input";
-                // A choice-less question with an "approval"-style header (e.g. the SDK's
-                // tool-call-limit gate, which expects exactly "Yes") is an APPROVAL gate;
-                // anything else is a clarify gate the user answers with text/options.
-                boolean approval = (question.choices == null || question.choices.isEmpty())
-                        && header.toLowerCase().contains("approval");
-                String kind = approval ? "approval" : "clarify";
-                emit.accept(new GateOpened(sessionId, new Gate(gateId, kind, header, protoQ)));
-                // Block the agent thread until the webview answers; on cancel/close,
-                // abort rather than fabricating an answer.
+                        gateId, GateClassifier.questionHeader(question.header),
+                        question.question, question.choices, question.multiSelect);
+                // Pure classification (clarify vs approval) lives in GateClassifier.
+                var decision = GateClassifier.classify(question.header, question.choices);
+                emit.accept(new GateOpened(sessionId,
+                        new Gate(gateId, decision.kind(), decision.gateHeader(), protoQ)));
+                // Block the agent thread until the webview answers; on cancel/close, abort
+                // rather than fabricating an answer.
                 Optional<String> answer = control.awaitGate(gateId);
                 emit.accept(new GateClosed(sessionId, gateId));
-                if (control.isCancelled() || control.isClosed()) {
-                    question.complete(approval ? "No" : "");
-                } else if (approval) {
-                    // The webview's Approve sends an empty answer; the SDK needs "Yes".
-                    question.complete("Yes");
-                } else {
-                    question.complete(resolveAnswer(answer, question));
-                }
+                boolean aborted = control.isCancelled() || control.isClosed();
+                question.complete(
+                        GateClassifier.answerFor(aborted, decision.approval(), answer, question.choices));
             }
 
             @Override
@@ -244,12 +235,5 @@ public class AgentRunSource implements RunSource {
                 emit.accept(new TurnFinished(turnId, "failed", 0));
             }
         }
-    }
-
-    /** Pick the answer to hand the agent: user's text, else first choice, else 'proceed'. */
-    private static String resolveAnswer(Optional<String> answer, Question question) {
-        if (answer.isPresent() && !answer.get().isBlank()) return answer.get();
-        if (question.choices != null && !question.choices.isEmpty()) return question.choices.get(0);
-        return "proceed";
     }
 }

@@ -87,9 +87,6 @@ public class SqlResource {
         return t;
     });
 
-    /** A safe SQL identifier: letters/digits/underscores, not starting with a digit. */
-    private static final Pattern SAFE_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-
     /** Request body: a single SQL statement and an optional result-row cap. */
     public record SqlRequest(String sql, Integer maxRows) {}
 
@@ -166,7 +163,7 @@ public class SqlResource {
         if (name.isEmpty() || select.isEmpty()) {
             return error(Response.Status.BAD_REQUEST, "Both 'name' and 'select' are required.");
         }
-        if (!SAFE_IDENTIFIER.matcher(name).matches()) {
+        if (!SessionTables.isValidIdentifier(name)) {
             return error(Response.Status.BAD_REQUEST,
                     "Invalid table name — use letters, digits, and underscores (not starting with a digit).");
         }

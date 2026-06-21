@@ -46,9 +46,12 @@ public final class SessionTables {
             java.util.regex.Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     /**
-     * Whether {@code name} is a plain, injection-safe SQL identifier. The single definition
-     * of the grammar that was hand-written in SqlResource, DataResource, SqlLineage,
-     * ToolPresenter, and SharedSql. Pure — unit-tested without a session.
+     * Whether {@code name} is a plain, injection-safe SQL identifier. The shared definition of
+     * the standalone-validator grammar (now also used by {@code SqlResource.save}). The
+     * SQL-DDL matchers in {@code SqlLineage}/{@code ToolPresenter} embed the same grammar as a
+     * capture group, and {@code SharedSql} keeps its own copy (it sits below this gateway in
+     * {@code ioa.llm.tool} and must not depend on {@code smile.daemon}). Pure — unit-tested
+     * without a session.
      */
     public static boolean isValidIdentifier(String name) {
         return name != null && IDENTIFIER.matcher(name).matches();
