@@ -13,7 +13,7 @@ import {
   reduceRun,
   appendUserTurn as appendUserTurnReducer,
   type RunState,
-} from "../daemon/runState";
+} from "./runState";
 import type { DaemonMessage } from "../daemon/protocol";
 import type { RunStore } from "./runStore";
 

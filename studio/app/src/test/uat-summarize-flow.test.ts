@@ -4,7 +4,7 @@
  * reducer. This is the flow that must stay green: it proves the frontend correctly folds a
  * genuine daemon turn (session-started → tool-calls → agent-chunks → artifacts → finished).
  */
-import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../daemon/runState";
+import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../store/runState";
 import type { DaemonMessage } from "../daemon/protocol";
 import { fixtureConnect, loadWsScript } from "./harness";
 

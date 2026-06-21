@@ -4,7 +4,7 @@
  * from RunContext so the Load Dataset action and the in-scope dataset chip are global.
  */
 import { useState } from "react";
-import { useRunContext } from "../automl/RunContext";
+import { useRunContext } from "../store/RunContext";
 import { SettingsDialog } from "./SettingsDialog";
 import { selectHasDataset } from "../store/selectors";
 

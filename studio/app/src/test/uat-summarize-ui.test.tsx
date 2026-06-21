@@ -5,7 +5,7 @@
  * chat returns to a ready (non-streaming) state. This is the highest-fidelity daemon-free UAT.
  */
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { RunProvider } from "../automl/RunContext";
+import { RunProvider } from "../store/RunContext";
 import { RunZones } from "../ui/RunView";
 import { fixtureConnect } from "./harness";
 

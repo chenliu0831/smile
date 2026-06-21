@@ -19,10 +19,10 @@ import { useEffect, useRef, useState } from "react";
 // the WASM off the import path so the pure transform layer (./dataFrame) stays testable.
 import type { HTMLPerspectiveViewerElement } from "@finos/perspective-viewer";
 
-import { toPerspectiveData, type DataGridData } from "./dataFrame";
+import { toPerspectiveData, type DataGridData } from "../lib/dataFrame";
 
-export type { DataGridData, DataGridColumns } from "./dataFrame";
-export { toArrowIPC, columnsToArrow, toPerspectiveData } from "./dataFrame";
+export type { DataGridData, DataGridColumns } from "../lib/dataFrame";
+export { toArrowIPC, columnsToArrow, toPerspectiveData } from "../lib/dataFrame";
 
 type PerspectiveModule = typeof import("@finos/perspective")["default"];
 

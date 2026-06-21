@@ -11,7 +11,7 @@
  * (finished-turn count) must change far fewer times than the old key (cumulative tool-calls).
  */
 import { test, expect } from "vitest";
-import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../daemon/runState";
+import { initialRunState, reduceRun, appendUserTurn, type RunState } from "../store/runState";
 import { loadWsScript } from "./harness";
 
 /** The OLD effect key: cumulative tool-call count across all turns. */

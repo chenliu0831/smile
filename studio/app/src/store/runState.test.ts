@@ -1,5 +1,5 @@
 import { initialRunState, reduceRun, appendUserTurn } from "./runState";
-import type { StageProgress } from "./protocol";
+import type { StageProgress } from "../daemon/protocol";
 
 const stages: StageProgress[] = [
   { stageId: "eda", label: "Exploratory Data Analysis", status: "pending", artifactRefs: [] },

@@ -1,4 +1,4 @@
-import type { Artifact, ChatTurn, DaemonMessage, Gate, StageProgress, Todo } from "./protocol";
+import type { Artifact, ChatTurn, DaemonMessage, Gate, StageProgress, Todo } from "../daemon/protocol";
 
 /**
  * Session state for the interactive agent (ADR-0006). The conversation is an ordered

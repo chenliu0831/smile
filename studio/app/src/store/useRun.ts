@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { useStore } from "zustand";
 import { connectRun } from "../daemon/connect";
 import { createRunStore, type RunStoreApi } from "../store/runStore";
-import type { RunState } from "../daemon/runState";
+import type { RunState } from "./runState";
 import type { LoadedDataset } from "../daemon/dataset";
 import type { DatasetInfo } from "../daemon/datasetInfo";
 import type { ConnectionMode } from "../daemon/connect";

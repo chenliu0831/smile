@@ -12,7 +12,7 @@
  * the canvas stays hidden until there's something to show, then splits in.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { RunProvider, useRunContext } from "../automl/RunContext";
+import { RunProvider, useRunContext } from "../store/RunContext";
 import { Topbar } from "./Topbar";
 import { AgentStream } from "./AgentStream";
 import { ErrorBoundary } from "./ErrorBoundary";

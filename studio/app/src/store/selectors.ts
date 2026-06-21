@@ -8,7 +8,7 @@
  * stay subscribed through the controller; these add no out-of-band store reads.
  */
 import type { Artifact } from "../daemon/protocol";
-import type { RunState } from "../daemon/runState";
+import type { RunState } from "./runState";
 import type { LoadedDataset } from "../daemon/dataset";
 import type { DatasetInfo } from "../daemon/datasetInfo";
 

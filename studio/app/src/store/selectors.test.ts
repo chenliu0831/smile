@@ -5,7 +5,7 @@ import {
   selectHasDataset,
   selectLeaderboard,
 } from "./selectors";
-import { initialRunState, type RunState } from "../daemon/runState";
+import { initialRunState, type RunState } from "./runState";
 import type { Artifact } from "../daemon/protocol";
 import type { LoadedDataset } from "../daemon/dataset";
 import type { DatasetInfo } from "../daemon/datasetInfo";

@@ -3,7 +3,7 @@
  * Data Grid; Perspective + Arrow virtualization (ADR-0007) is the production target,
  * deferred here because the candidate set is small.
  */
-import { parseLeaderboard, defaultMetric } from "../automl/leaderboard";
+import { parseLeaderboard, defaultMetric } from "../lib/leaderboard";
 
 export function Leaderboard({ markdown }: { markdown: string }) {
   // Mock run is binary churn; the daemon will send the real problem type later.

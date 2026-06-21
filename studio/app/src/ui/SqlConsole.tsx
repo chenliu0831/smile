@@ -9,7 +9,7 @@
  * left rail lists every shared-session table with its columns + lineage (click to insert).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useRunContext } from "../automl/RunContext";
+import { useRunContext } from "../store/RunContext";
 import {
   runSql,
   saveAsTable,
@@ -19,7 +19,7 @@ import {
   type TableInfo,
 } from "../daemon/sql";
 import { DataGrid } from "./DataGrid";
-import { agentSqlStatements, freshAgentSql } from "./agentSql";
+import { agentSqlStatements, freshAgentSql } from "../lib/agentSql";
 import { canLoadDataset } from "../daemon/dataset";
 import { selectIsBusy } from "../store/selectors";
 

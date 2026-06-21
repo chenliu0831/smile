@@ -25,7 +25,7 @@ vi.mock("../daemon/dataset", () => ({
 vi.mock("../daemon/sql", async (orig) => ({ ...(await orig<typeof import("../daemon/sql")>()), runSql: (...a: unknown[]) => runSql(...a) }));
 vi.mock("../daemon/datasetInfo", async (orig) => ({ ...(await orig<typeof import("../daemon/datasetInfo")>()), fetchDatasetInfo: (...a: unknown[]) => fetchDatasetInfo(...a) }));
 
-import { useRun } from "../automl/useRun";
+import { useRun } from "../store/useRun";
 import { SqlRunError } from "../daemon/sql";
 import { fixtureConnect } from "./harness";
 

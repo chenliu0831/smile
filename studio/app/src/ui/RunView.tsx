@@ -10,7 +10,7 @@
  * usage/tests stay intact.
  */
 import { useState } from "react";
-import { RunProvider, useRunContext } from "../automl/RunContext";
+import { RunProvider, useRunContext } from "../store/RunContext";
 import { Topbar } from "./Topbar";
 import { Timeline } from "./Timeline";
 import { Canvas } from "./Canvas";

@@ -1,6 +1,6 @@
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./App";
-import { RunProvider } from "./automl/RunContext";
+import { RunProvider } from "./store/RunContext";
 import { RunZones } from "./ui/RunView";
 
 test("renders the studio brand", () => {

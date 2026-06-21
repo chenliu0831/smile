@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import type { DataVizSpec } from "../daemon/protocol";
-import { useRunContext } from "../automl/RunContext";
+import { useRunContext } from "../store/RunContext";
 import { mockTable, type ColumnTable } from "../daemon/mock/mockData";
 
 const AXIS = { axisLine: { lineStyle: { color: "#2a3340" } }, axisLabel: { color: "#8b98a8" } };
