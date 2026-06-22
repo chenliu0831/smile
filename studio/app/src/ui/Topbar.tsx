@@ -46,8 +46,8 @@ export function Topbar() {
           dimensions, reflects what the agent actually analyzes) and fall back to the in-app
           loaded file. The hasDataset precedence is the shared selectHasDataset selector. */}
       {datasetInfo ? (
-        <span className="dataset-chip" title={`The agent is working with input/${datasetInfo.fileName}`}>
-          📄 {datasetInfo.fileName} <em>{datasetInfo.nrow.toLocaleString()}×{datasetInfo.ncol}</em>
+        <span className="dataset-chip" title={`Querying the session table "${datasetInfo.fileName}" (${datasetInfo.nrow}×${datasetInfo.ncol})`}>
+          ⌗ {datasetInfo.fileName} <em>{datasetInfo.nrow.toLocaleString()}×{datasetInfo.ncol}</em>
         </span>
       ) : dataset ? (
         <span className="dataset-chip" title={dataset.workingDir}>

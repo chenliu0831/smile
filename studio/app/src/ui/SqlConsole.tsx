@@ -591,16 +591,11 @@ function SqlStatus({
 }
 
 /**
- * A conflict-free seed query: reads the input file directly via the right DuckDB reader,
- * creating no table (so it never collides with the agent's `SQL load`, which CREATEs a
- * table of the same stem). The agent's loaded table, once present, shows up in the rail.
+ * A starter query for the primary dataset: selects from the imported DuckDB session TABLE
+ * (datasetInfo.fileName is the table name now — not a file path). This is the real, queryable
+ * table the user imported; no `read_csv('input/…')` file-path guessing, no working-directory
+ * dependency, and it shows up in the schema rail.
  */
-function seedQuery(fileName: string): string {
-  const lower = fileName.toLowerCase();
-  const path = `input/${fileName}`;
-  if (lower.endsWith(".parquet")) return `SELECT * FROM read_parquet('${path}') LIMIT 100`;
-  if (lower.endsWith(".json") || lower.endsWith(".jsonl")) return `SELECT * FROM read_json('${path}') LIMIT 100`;
-  if (lower.endsWith(".tsv")) return `SELECT * FROM read_csv('${path}', delim='\\t', header=true) LIMIT 100`;
-  // CSV and everything else: read_csv with header inference.
-  return `SELECT * FROM read_csv('${path}', header=true) LIMIT 100`;
+function seedQuery(table: string): string {
+  return `SELECT * FROM "${table}" LIMIT 100`;
 }

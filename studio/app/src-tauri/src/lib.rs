@@ -201,13 +201,13 @@ fn repo_root() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-/// Path for the daemon's redirected stdout/stderr log: `<launch-cwd>/logs/daemon.log`.
-/// Uses the directory the app was STARTED from (the Shell process's current dir) so the log
-/// sits right next to where you launched it — e.g. start in /path/to/proj → /path/to/proj/logs.
-/// Returns None if the cwd can't be resolved or the logs dir can't be created (stdio is then
-/// left inherited).
-fn daemon_log_path() -> Option<std::path::PathBuf> {
-    let dir = std::env::current_dir().ok()?.join("logs");
+/// Path for the daemon's redirected stdout/stderr log: `<working-dir>/logs/daemon.log`.
+/// Uses the daemon's resolved working directory (the dir you launched from, per
+/// resolve_working_dir) so the log sits next to your workspace — e.g. launch in
+/// /path/to/proj → /path/to/proj/logs/daemon.log. NOT the src-tauri binary cwd. Returns None
+/// if the logs dir can't be created (stdio is then left inherited).
+fn daemon_log_path(working_dir: &str) -> Option<std::path::PathBuf> {
+    let dir = std::path::Path::new(working_dir).join("logs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("daemon.log"))
 }
@@ -278,12 +278,35 @@ fn credential_for(provider: &str) -> String {
 /// the provider's environment variable, on a free loopback port, and waits until it is
 /// listening. The agent's working directory is `working_dir` (where `input/<dataset>.csv`
 /// lives). Returns the live connection info.
+/// Resolve the daemon's working directory. The webview passes "." as a cold-start sentinel
+/// meaning "no dataset loaded — use the default workspace". Tauri runs the shell binary from
+/// src-tauri/, so a literal "." would put the agent in the SOURCE TREE; resolve it instead to
+/// the directory the user LAUNCHED from (SMILE_STUDIO_LAUNCH_DIR, exported by run.sh before it
+/// cd's), falling back to the home dir — never the source tree. An explicit (non-".") dir from
+/// Load Dataset is used as-is.
+fn resolve_working_dir(working_dir: &str) -> String {
+    if working_dir != "." {
+        return working_dir.to_string();
+    }
+    if let Ok(launch) = std::env::var("SMILE_STUDIO_LAUNCH_DIR") {
+        if !launch.is_empty() {
+            return launch;
+        }
+    }
+    // Fallback: the user's home dir (a sane, writable workspace), never the src-tauri cwd.
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| ".".to_string())
+}
+
 #[tauri::command]
 fn start_daemon(
     app: tauri::AppHandle,
     state: State<DaemonState>,
     working_dir: String,
 ) -> Result<DaemonInfo, String> {
+    let working_dir = resolve_working_dir(&working_dir);
     {
         let mut guard = state.0.lock().unwrap();
         if let Some(d) = guard.as_ref() {
@@ -350,7 +373,7 @@ fn start_daemon(
     // inherits the Shell's stdio, so when the app exits the daemon's output is gone — leaving
     // nothing to diagnose a hang after the fact. The path is logged so it's easy to find/tail.
     // Truncated each launch (one daemon at a time); the JVM's own logger timestamps each line.
-    let log_path = daemon_log_path();
+    let log_path = daemon_log_path(&working_dir);
     match log_path
         .as_ref()
         .and_then(|p| std::fs::File::create(p).ok())
@@ -634,5 +657,41 @@ mod tests {
         let b = generate_session_token();
         assert!(!a.is_empty());
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn resolve_working_dir_uses_explicit_dir_verbatim() {
+        // A real path from Load Dataset is used as-is (never overridden by the launch dir).
+        assert_eq!(resolve_working_dir("/data/sessions/abc"), "/data/sessions/abc");
+    }
+
+    #[test]
+    fn resolve_working_dir_sentinel_prefers_launch_dir() {
+        // The "." cold-start sentinel resolves to the launch dir, NOT the src-tauri binary cwd.
+        // SAFETY: single-threaded test; we set then restore the env var.
+        let prev = std::env::var("SMILE_STUDIO_LAUNCH_DIR").ok();
+        std::env::set_var("SMILE_STUDIO_LAUNCH_DIR", "/Users/me/smile_example");
+        assert_eq!(resolve_working_dir("."), "/Users/me/smile_example");
+        match prev {
+            Some(v) => std::env::set_var("SMILE_STUDIO_LAUNCH_DIR", v),
+            None => std::env::remove_var("SMILE_STUDIO_LAUNCH_DIR"),
+        }
+    }
+
+    #[test]
+    fn resolve_working_dir_sentinel_falls_back_to_home_not_source_tree() {
+        let prevlaunch = std::env::var("SMILE_STUDIO_LAUNCH_DIR").ok();
+        std::env::remove_var("SMILE_STUDIO_LAUNCH_DIR");
+        // With no launch dir, "." resolves to $HOME (a sane workspace), never ".".
+        let resolved = resolve_working_dir(".");
+        if let Ok(home) = std::env::var("HOME") {
+            if !home.is_empty() {
+                assert_eq!(resolved, home);
+            }
+        }
+        assert_ne!(resolved, ""); // never empty
+        if let Some(v) = prevlaunch {
+            std::env::set_var("SMILE_STUDIO_LAUNCH_DIR", v);
+        }
     }
 }

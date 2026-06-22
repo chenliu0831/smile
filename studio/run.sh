@@ -13,6 +13,13 @@
 #
 set -euo pipefail
 
+# The directory you launched from IS the agent's workspace (where it reads/writes files, runs
+# AutoML, and writes logs/). Capture it BEFORE any cd, and export it so the Rust shell can use
+# it as the daemon's working dir — otherwise the daemon inherits Tauri's binary cwd
+# (studio/app/src-tauri), putting the agent in the source tree.
+export SMILE_STUDIO_LAUNCH_DIR="$PWD"
+echo "▸ Workspace (agent working dir + logs): $SMILE_STUDIO_LAUNCH_DIR"
+
 # Resolve the repo root from this script's location (studio/run.sh -> repo root).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
