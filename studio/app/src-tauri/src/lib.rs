@@ -27,7 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{Manager, State};
@@ -201,6 +201,14 @@ fn repo_root() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
+/// Path for the daemon's redirected stdout/stderr log: `<app_data_dir>/logs/daemon.log`.
+/// Returns None if the app data dir can't be resolved (then stdio is left inherited).
+fn daemon_log_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().app_data_dir().ok()?.join("logs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("daemon.log"))
+}
+
 fn free_port() -> Result<u16, String> {
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
@@ -288,7 +296,7 @@ fn start_daemon(
         }
     }
 
-    let cfg = get_llm_config(app)?;
+    let cfg = get_llm_config(app.clone())?; // clone: app is still needed for the daemon log path
     let credential = credential_for(&cfg.provider);
     // No credential in the environment → don't spawn a doomed daemon; the Webview falls
     // back to the mock. The user sets the provider's token env var (e.g.
@@ -334,6 +342,29 @@ fn start_daemon(
     for (k, v) in &inv.env {
         cmd.env(k, v);
     }
+
+    // Redirect the daemon's stdout+stderr to a persistent log file. Without this the JVM
+    // inherits the Shell's stdio, so when the app exits the daemon's output is gone — leaving
+    // nothing to diagnose a hang after the fact. The path is logged so it's easy to find/tail.
+    // Truncated each launch (one daemon at a time); the JVM's own logger timestamps each line.
+    let log_path = daemon_log_path(&app);
+    match log_path
+        .as_ref()
+        .and_then(|p| std::fs::File::create(p).ok())
+        .and_then(|f| f.try_clone().ok().map(|f2| (f, f2)))
+    {
+        Some((out, err)) => {
+            cmd.stdout(Stdio::from(out)).stderr(Stdio::from(err));
+            if let Some(p) = &log_path {
+                eprintln!("[smile-shell] daemon log → {}", p.display());
+            }
+        }
+        None => eprintln!("[smile-shell] WARN: could not open daemon log file; daemon stdio inherited"),
+    }
+    // Record the exact invocation (args only — the credential lives in env, never logged).
+    eprintln!("[smile-shell] spawning daemon on port {port}, cwd {working_dir}");
+    eprintln!("[smile-shell] java {}", inv.args.join(" "));
+
     let child = cmd.spawn().map_err(|e| format!("failed to spawn daemon: {e}"))?;
 
     if !wait_until_listening(port, Duration::from_secs(60)) {

@@ -119,12 +119,14 @@ public class AgentRunSource implements RunSource {
         var watcher = new RunArtifactWatcher(sessionId, workingDir, emit);
 
         // Multi-turn loop: one user message -> one streamed agent turn -> idle.
+        LOG.infof("Agent session %s ready; awaiting first user message", sessionId);
         while (!control.isClosed()) {
             Optional<String> next = control.takeUserMessage();
             if (next.isEmpty()) break; // session closed
             control.clearCancel();
             watcher.start(); // idempotent; begins seeding stages on the first real turn
             streamTurn(agent, llm, next.get(), emit, control);
+            LOG.infof("Agent session %s idle; awaiting next user message", sessionId);
         }
         watcher.stop();
         LOG.debug("Chat session ended");
@@ -153,6 +155,11 @@ public class AgentRunSource implements RunSource {
         var doneLatch = new CountDownLatch(1);
         // Guards a single TurnFinished + single latch countdown across the SDK threads.
         var terminated = new AtomicBoolean(false);
+        // Diagnostic counters: a stall after skill-load shows as chunks>0 but toolCalls==0 and
+        // no terminal callback — the heartbeat below makes that visible instead of dead silence.
+        var chunkCount = new AtomicInteger();
+        var toolCallCount = new AtomicInteger();
+        LOG.infof("[%s] turn START (userText %d chars)", turnId, userText.length());
 
         // Reset the interrupt flag at the START of the turn (never in a finally that could
         // run while the prior stream is still alive).
@@ -161,12 +168,14 @@ public class AgentRunSource implements RunSource {
         var handler = new StreamResponseHandler() {
             @Override
             public void onNext(String chunk) {
+                chunkCount.incrementAndGet();
                 emit.accept(new AgentChunk(sessionId, chunk));
             }
 
             @Override
             public void onStatus(String status) {
                 if (status != null && !status.isBlank()) {
+                    LOG.infof("[%s] status: %s", turnId, status);
                     emit.accept(new AgentChunk(sessionId, "\n[" + status + "]\n"));
                 }
             }
@@ -176,6 +185,7 @@ public class AgentRunSource implements RunSource {
                 // R1: TodoWrite carries the agent's task plan — surface it as a live
                 // checklist (a TodoList message), not a noisy generic tool-call card.
                 if (tool instanceof ioa.llm.tool.TodoWrite tw && tw.todos != null) {
+                    LOG.infof("[%s] todo-write (%d items)", turnId, tw.todos.size());
                     var todos = tw.todos.stream()
                             .map(t -> new Todo(t.content, t.status, t.activeForm))
                             .toList();
@@ -186,6 +196,8 @@ public class AgentRunSource implements RunSource {
                 ToolPresenter.Card card = ToolPresenter.present(tool);
                 String id = "tc-" + seq.incrementAndGet();
                 boolean done = result != null;
+                LOG.infof("[%s] tool-call #%d: %s '%s' (%s)", turnId, toolCallCount.incrementAndGet(),
+                        card.kind(), card.title(), done ? (result.success() ? "done" : "failed") : "running");
                 String status = done ? (result.success() ? "done" : "failed") : "running";
                 // Prefer the result's command for the title once complete, else the card title.
                 String title = done && result.command() != null && !result.command().isBlank()
@@ -203,11 +215,15 @@ public class AgentRunSource implements RunSource {
                         question.question, question.choices, question.multiSelect);
                 // Pure classification (clarify vs approval) lives in GateClassifier.
                 var decision = GateClassifier.classify(question.header, question.choices);
+                LOG.infof("[%s] gate OPENED %s (%s) '%s' — BLOCKING for webview answer",
+                        turnId, gateId, decision.kind(), decision.gateHeader());
                 emit.accept(new GateOpened(sessionId,
                         new Gate(gateId, decision.kind(), decision.gateHeader(), protoQ)));
                 // Block the agent thread until the webview answers; on cancel/close, abort
                 // rather than fabricating an answer.
                 Optional<String> answer = control.awaitGate(gateId);
+                LOG.infof("[%s] gate %s RESOLVED (answered=%b, aborted=%b)", turnId, gateId,
+                        answer.isPresent(), control.isCancelled() || control.isClosed());
                 emit.accept(new GateClosed(sessionId, gateId));
                 boolean aborted = control.isCancelled() || control.isClosed();
                 question.complete(
@@ -217,6 +233,8 @@ public class AgentRunSource implements RunSource {
             @Override
             public void onComplete(long total, long output, long input) {
                 if (terminated.compareAndSet(false, true)) {
+                    LOG.infof("[%s] turn COMPLETE (%d chunks, %d tool-calls, %d output tokens)",
+                            turnId, chunkCount.get(), toolCallCount.get(), output);
                     emit.accept(new TurnFinished(turnId, "done", output));
                     doneLatch.countDown();
                 }
@@ -224,7 +242,8 @@ public class AgentRunSource implements RunSource {
 
             @Override
             public void onException(Throwable ex) {
-                LOG.error("Agent turn failed", ex);
+                LOG.errorf(ex, "[%s] turn EXCEPTION after %d chunks, %d tool-calls",
+                        turnId, chunkCount.get(), toolCallCount.get());
                 if (terminated.compareAndSet(false, true)) {
                     emit.accept(new AgentChunk(sessionId, "\nError: " + ex.getMessage()));
                     emit.accept(new TurnFinished(turnId, "failed", 0));
@@ -243,14 +262,27 @@ public class AgentRunSource implements RunSource {
             // so a "Save as table" DuckDB table is visible to summarize/AutoML. Bounded and
             // best-effort; empty when there's genuinely no data yet.
             String prompt = DataContext.preamble(workingDir) + userText;
+            LOG.infof("[%s] dispatching llm.complete (prompt %d chars incl. data-context preamble)",
+                    turnId, prompt.length());
             llm.complete(prompt, agent.conversation(), handler);
             // Wait for a terminal callback. On cancel/close, raise INTERRUPTED (consumed
             // at the SDK's next round boundary) but KEEP waiting so the turn is quiescent
             // before we return — preserving the one-turn-at-a-time invariant.
+            // A heartbeat logs every ~10s so a stall (no terminal callback, no tool-call) is
+            // visible as "still waiting" lines with counts/elapsed, not dead silence.
+            long startNanos = System.nanoTime();
+            int beats = 0;
             while (!doneLatch.await(200, TimeUnit.MILLISECONDS)) {
                 if (!interruptRequested && (control.isCancelled() || control.isClosed())) {
                     agent.conversation().params().setProperty(LLM.INTERRUPTED, "true");
                     interruptRequested = true;
+                }
+                long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+                if (elapsedMs / 10_000 > beats) {
+                    beats = (int) (elapsedMs / 10_000);
+                    LOG.infof("[%s] still waiting for terminal callback — %ds elapsed, %d chunks, %d tool-calls%s",
+                            turnId, elapsedMs / 1000, chunkCount.get(), toolCallCount.get(),
+                            interruptRequested ? " (interrupt requested)" : "");
                 }
             }
         } catch (InterruptedException e) {
