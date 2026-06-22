@@ -1,0 +1,11 @@
+{"sessionId":"session-gate01","greeting":"Hi, I'm Clair — your data-science analyst. Load a dataset or ask me to analyze one, and I'll take it from there.","type":"session-started"}
+{"turnId":"turn-1","role":"agent","type":"turn-started"}
+{"runId":"session-gate01","text":"I'll set up an AutoML run on the Titanic dataset. ","type":"agent-chunk"}
+{"runId":"session-gate01","text":"First I need to confirm the task type.","type":"agent-chunk"}
+{"type":"gate-opened","runId":"session-gate01","gate":{"id":"g-3","kind":"clarify","prompt":"Task type","question":{"id":"g-3","header":"Task type","prompt":"What kind of model should I build for this dataset?","options":["Binary Classification","Multiclass Classification","Regression"],"multiSelect":false}}}
+{"type":"gate-closed","runId":"session-gate01","gateId":"g-3"}
+{"runId":"session-gate01","text":"Got it — I'll train a binary classifier to predict survival.","type":"agent-chunk"}
+{"runId":"session-gate01","call":{"id":"tc-1","title":"Train baseline model","kind":"script","status":"done","code":"automl.fit(target='Survived', task='binary')","output":"Baseline AUC: 0.83"},"type":"tool-call"}
+{"runId":"session-gate01","artifact":{"ref":"freeform:leaderboard.md","kind":"leaderboard","title":"Model Leaderboard","body":"# Model Leaderboard\n\n| Model | AUC |\n|-------|-----|\n| GradientBoosting | 0.86 |\n| RandomForest | 0.84 |\n| LogisticRegression | 0.81 |","viz":null,"data":null,"path":"/private/tmp/smile-e2e/work/leaderboard.md"},"type":"artifact"}
+{"runId":"session-gate01","text":" The best model is GradientBoosting at 0.86 AUC.","type":"agent-chunk"}
+{"turnId":"turn-1","status":"done","type":"turn-finished"}
