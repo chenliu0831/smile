@@ -22,6 +22,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 import ioa.agent.Agent;
@@ -159,6 +160,10 @@ public class AgentRunSource implements RunSource {
         // no terminal callback — the heartbeat below makes that visible instead of dead silence.
         var chunkCount = new AtomicInteger();
         var toolCallCount = new AtomicInteger();
+        // Last time the SDK delivered ANY callback (chunk/status/tool-call/gate). If this goes
+        // quiet while the latch is still open, the LLM stream was silently dropped (no terminal
+        // onComplete/onException) — the stall detector below makes that visible.
+        var lastActivityNanos = new AtomicLong(System.nanoTime());
         LOG.infof("[%s] turn START (userText %d chars)", turnId, userText.length());
 
         // Reset the interrupt flag at the START of the turn (never in a finally that could
@@ -168,12 +173,14 @@ public class AgentRunSource implements RunSource {
         var handler = new StreamResponseHandler() {
             @Override
             public void onNext(String chunk) {
+                lastActivityNanos.set(System.nanoTime());
                 chunkCount.incrementAndGet();
                 emit.accept(new AgentChunk(sessionId, chunk));
             }
 
             @Override
             public void onStatus(String status) {
+                lastActivityNanos.set(System.nanoTime());
                 if (status != null && !status.isBlank()) {
                     LOG.infof("[%s] status: %s", turnId, status);
                     emit.accept(new AgentChunk(sessionId, "\n[" + status + "]\n"));
@@ -182,6 +189,7 @@ public class AgentRunSource implements RunSource {
 
             @Override
             public void onToolCallStatus(ioa.llm.tool.Tool tool, ioa.llm.tool.Tool.Result result) {
+                lastActivityNanos.set(System.nanoTime());
                 // R1: TodoWrite carries the agent's task plan — surface it as a live
                 // checklist (a TodoList message), not a noisy generic tool-call card.
                 if (tool instanceof ioa.llm.tool.TodoWrite tw && tw.todos != null) {
@@ -209,6 +217,7 @@ public class AgentRunSource implements RunSource {
 
             @Override
             public void onQuestion(Question question) {
+                lastActivityNanos.set(System.nanoTime());
                 String gateId = "g-" + seq.incrementAndGet();
                 var protoQ = new DaemonMessage.Question(
                         gateId, GateClassifier.questionHeader(question.header),
@@ -270,19 +279,42 @@ public class AgentRunSource implements RunSource {
             // before we return — preserving the one-turn-at-a-time invariant.
             // A heartbeat logs every ~10s so a stall (no terminal callback, no tool-call) is
             // visible as "still waiting" lines with counts/elapsed, not dead silence.
+            // No-activity threshold for the silent-stall detector: if the SDK delivers no
+            // callback for this long while the turn is still open, the LLM stream was almost
+            // certainly dropped without a terminal onComplete/onException (observed: a Bedrock
+            // HTTP/2 stream silently dies, the SDK's error path never fires, and this loop would
+            // otherwise wait forever with no clue). A normal LLM round streams chunks well
+            // within this window, so it won't false-positive on legitimate work.
+            final long STALL_THRESHOLD_MS = 60_000;
             long startNanos = System.nanoTime();
             int beats = 0;
+            boolean stallWarned = false;
             while (!doneLatch.await(200, TimeUnit.MILLISECONDS)) {
                 if (!interruptRequested && (control.isCancelled() || control.isClosed())) {
                     agent.conversation().params().setProperty(LLM.INTERRUPTED, "true");
                     interruptRequested = true;
                 }
-                long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000;
+                long now = System.nanoTime();
+                long elapsedMs = (now - startNanos) / 1_000_000;
                 if (elapsedMs / 10_000 > beats) {
                     beats = (int) (elapsedMs / 10_000);
                     LOG.infof("[%s] still waiting for terminal callback — %ds elapsed, %d chunks, %d tool-calls%s",
                             turnId, elapsedMs / 1000, chunkCount.get(), toolCallCount.get(),
                             interruptRequested ? " (interrupt requested)" : "");
+                }
+                // Silent-stall detection: warn ONCE when activity goes quiet past the threshold;
+                // re-arm if a callback arrives (activity timestamp moves) so a later stall warns again.
+                long idleMs = (now - lastActivityNanos.get()) / 1_000_000;
+                if (idleMs >= STALL_THRESHOLD_MS && !stallWarned) {
+                    stallWarned = true;
+                    LOG.warnf("[%s] SILENT STALL: no SDK callback for %ds (%d chunks, %d tool-calls so far). "
+                            + "The LLM stream likely dropped with no terminal callback — check the "
+                            + "com.openai/okhttp3 DEBUG logs above for a transport error or dropped stream. "
+                            + "The turn will remain open until cancelled or the connection closes.",
+                            turnId, idleMs / 1000, chunkCount.get(), toolCallCount.get());
+                } else if (idleMs < STALL_THRESHOLD_MS && stallWarned) {
+                    stallWarned = false; // activity resumed — re-arm for a future stall
+                    LOG.infof("[%s] activity resumed after a stall", turnId);
                 }
             }
         } catch (InterruptedException e) {
