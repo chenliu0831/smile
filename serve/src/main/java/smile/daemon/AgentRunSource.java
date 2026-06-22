@@ -51,6 +51,21 @@ import smile.daemon.DaemonMessage.*;
  */
 public class AgentRunSource implements RunSource {
     private static final org.jboss.logging.Logger LOG = org.jboss.logging.Logger.getLogger(AgentRunSource.class);
+
+    /**
+     * Serializes agent construction across ALL sessions in this JVM. {@code Agent.Spec.of}
+     * loads skill resources via {@code smile.io.Paths.resource}, which lazily initializes a
+     * zip {@code FileSystem} for the ioa-agent jar with a non-atomic check-then-act
+     * ({@code Path.of(uri)} → on miss → {@code FileSystems.newFileSystem(uri)}). Two sessions
+     * constructing concurrently (e.g. two WebSocket connections, a reconnect, or a StrictMode
+     * dev double-mount) race that init and the loser throws
+     * {@code FileSystemAlreadyExistsException}. Smile's {@code Paths} is a vendored library we
+     * don't modify; serializing the construction here makes the first call create the cached
+     * filesystem and every later call take the fast already-exists path. Construction is a
+     * one-time-per-session cost, so the lock is not on any hot path.
+     */
+    private static final Object AGENT_INIT_LOCK = new Object();
+
     private final String sessionId;
     private final Path workingDir;
     private final Supplier<LLM> llmFactory;
@@ -71,14 +86,20 @@ public class AgentRunSource implements RunSource {
         Agent agent;
         LLM llm;
         try {
-            var spec = Agent.Spec.of("analyst");
-            llm = llmFactory.get();
-            agent = new Agent(spec, () -> llm, workingDir);
-            // Clair's skills run Python, read/write files, and visualize data.
-            agent.conversation().addTools(Tool.file());
-            agent.conversation().addTools(Tool.shell());
-            agent.conversation().addTools(Tool.data());
-            agent.conversation().addTools(Tool.planning());
+            // Serialize construction across sessions (see AGENT_INIT_LOCK): Agent.Spec.of
+            // lazily inits a zip filesystem via smile.io.Paths with a non-atomic
+            // check-then-act, so concurrent construction otherwise throws
+            // FileSystemAlreadyExistsException.
+            synchronized (AGENT_INIT_LOCK) {
+                var spec = Agent.Spec.of("analyst");
+                llm = llmFactory.get();
+                agent = new Agent(spec, () -> llm, workingDir);
+                // Clair's skills run Python, read/write files, and visualize data.
+                agent.conversation().addTools(Tool.file());
+                agent.conversation().addTools(Tool.shell());
+                agent.conversation().addTools(Tool.data());
+                agent.conversation().addTools(Tool.planning());
+            }
         } catch (Throwable t) {
             LOG.error("Failed to initialize Clair agent", t);
             emit.accept(new AgentChunk(sessionId, "Failed to initialize the agent: " + t.getMessage()));

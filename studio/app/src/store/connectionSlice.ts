@@ -39,38 +39,57 @@ export interface ConnectionSlice {
  */
 export const createConnectionSlice =
   (connectRun: typeof defaultConnectRun): StateCreator<RunStore, [], [], ConnectionSlice> =>
-  (set, get) => ({
-    connection: null,
-    httpBase: null,
-    mode: "demo",
+  (set, get) => {
+    // Monotonic lifecycle token, held in the slice closure (NOT reactive state — it must not
+    // re-render). Bumped by every connect() and teardown(). A connect() captures the token
+    // before awaiting connectRun; if it changed by the time the connection resolves, this
+    // connect was superseded (a teardown or a newer connect ran meanwhile) — we stop the
+    // just-created connection and bail instead of starting/storing it. This restores the
+    // disposed-guard the pre-Zustand useRun had: without it, a React StrictMode double-mount
+    // (or a fast reconnect) leaves connect#1 AND connect#2 both stored — connect#2 overwrites
+    // `connection`, orphaning connect#1's socket with its subscription still pushing frames
+    // into the reducer (duplicate frames + a leaked WS + a second daemon agent session).
+    let epoch = 0;
+    return {
+      connection: null,
+      httpBase: null,
+      mode: "demo",
 
-    connect: async (workingDir = ".") => {
-      const { connection: conn, mode } = await connectRun(350, workingDir);
-      // Subscribe BEFORE start() so no early frame (the greeting) is missed.
-      conn.subscribe((msg) => get().applyMessage(msg));
-      conn.start();
-      const base = conn.httpBase();
-      set({ connection: conn, mode, httpBase: base });
-      // If a real daemon is attached, fetch native dataset insights (data slice owns it).
-      if (base) get().refreshDatasetInfo(base);
-      else get().setDatasetInfo(null);
-    },
+      connect: async (workingDir = ".") => {
+        const myEpoch = ++epoch;
+        const { connection: conn, mode } = await connectRun(350, workingDir);
+        if (myEpoch !== epoch) {
+          // Superseded while awaiting — discard this connection rather than wiring it up.
+          conn.stop();
+          return;
+        }
+        // Subscribe BEFORE start() so no early frame (the greeting) is missed.
+        conn.subscribe((msg) => get().applyMessage(msg));
+        conn.start();
+        const base = conn.httpBase();
+        set({ connection: conn, mode, httpBase: base });
+        // If a real daemon is attached, fetch native dataset insights (data slice owns it).
+        if (base) get().refreshDatasetInfo(base);
+        else get().setDatasetInfo(null);
+      },
 
-    teardown: () => {
-      get().connection?.stop();
-      set({ connection: null });
-    },
+      teardown: () => {
+        epoch++; // invalidate any in-flight connect() so it won't start/store its connection
+        get().connection?.stop();
+        set({ connection: null });
+      },
 
-    sendMessage: (text) => {
-      const s = get();
-      // One turn at a time: the daemon's Conversation is shared mutable state, so refuse to
-      // send while a turn streams or a gate is open (the UI also disables the input).
-      if (s.session.streaming || s.session.openGates.length > 0) return;
-      s.appendUserTurn(text);
-      s.connection?.sendMessage(text);
-    },
+      sendMessage: (text) => {
+        const s = get();
+        // One turn at a time: the daemon's Conversation is shared mutable state, so refuse to
+        // send while a turn streams or a gate is open (the UI also disables the input).
+        if (s.session.streaming || s.session.openGates.length > 0) return;
+        s.appendUserTurn(text);
+        s.connection?.sendMessage(text);
+      },
 
-    resolveGate: (gateId, answer) => get().connection?.answerGate(gateId, answer),
-    approveGate: (gateId) => get().connection?.approveGate(gateId),
-    cancel: () => get().connection?.cancel(),
-  });
+      resolveGate: (gateId, answer) => get().connection?.answerGate(gateId, answer),
+      approveGate: (gateId) => get().connection?.approveGate(gateId),
+      cancel: () => get().connection?.cancel(),
+    };
+  };
