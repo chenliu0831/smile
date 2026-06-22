@@ -56,13 +56,19 @@ public class AgentRunSource implements RunSource {
      * Serializes agent construction across ALL sessions in this JVM. {@code Agent.Spec.of}
      * loads skill resources via {@code smile.io.Paths.resource}, which lazily initializes a
      * zip {@code FileSystem} for the ioa-agent jar with a non-atomic check-then-act
-     * ({@code Path.of(uri)} → on miss → {@code FileSystems.newFileSystem(uri)}). Two sessions
-     * constructing concurrently (e.g. two WebSocket connections, a reconnect, or a StrictMode
-     * dev double-mount) race that init and the loser throws
-     * {@code FileSystemAlreadyExistsException}. Smile's {@code Paths} is a vendored library we
-     * don't modify; serializing the construction here makes the first call create the cached
-     * filesystem and every later call take the fast already-exists path. Construction is a
-     * one-time-per-session cost, so the lock is not on any hot path.
+     * ({@code Path.of(uri)} → on miss → {@code FileSystems.newFileSystem(uri)}).
+     *
+     * <p>This is NOT already safe via class-init: {@code Agent.Spec} is a separate class with
+     * no static initializer, so {@code Spec.of("analyst")} touches the jar (Agent.java:179)
+     * BEFORE {@code Agent.<clinit>} (which would otherwise warm the FS) ever runs. So two
+     * sessions constructing concurrently — two WebSocket connections, a reconnect, or (the
+     * bug this fixes) a StrictMode dev double-mount opening a second socket — both find the FS
+     * absent and the loser throws {@code FileSystemAlreadyExistsException} (empirically
+     * reproduced: 5/6 concurrent threads threw). Smile's {@code Paths} is a vendored library
+     * we don't modify; serializing the first construction here makes one thread create the
+     * cached filesystem and every later call (sessions AND the subagents Tool.planning() can
+     * spawn — all built-in agent types live in the same jar/URI) take the fast already-exists
+     * path. Construction is one-time-per-session, so the lock is not on any hot path.
      */
     private static final Object AGENT_INIT_LOCK = new Object();
 

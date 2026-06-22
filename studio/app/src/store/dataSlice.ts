@@ -52,7 +52,14 @@ export const createDataSlice: StateCreator<RunStore, [], [], DataSlice> = (set, 
   setDatasetInfo: (info) => set({ datasetInfo: info }),
 
   refreshDatasetInfo: async (httpBase) => {
+    // Guard against supersession the same way connect() does: capture the lifecycle token
+    // before the await, and drop the result if a teardown/reconnect happened meanwhile — so a
+    // stale daemon's late /dataset response can't resurrect old (or blank) insights onto a
+    // newer session. connect() fires this un-awaited, so it is NOT covered by connect()'s own
+    // epoch check; it must re-check here.
+    const token = get().lifecycle();
     const info = await fetchDatasetInfo(httpBase);
+    if (get().lifecycle() !== token) return;
     set({ datasetInfo: info });
   },
 
@@ -89,9 +96,14 @@ export const createDataSlice: StateCreator<RunStore, [], [], DataSlice> = (set, 
     await stageDataset(path).catch(() => {/* table import already succeeded */});
     // Reflect it without a restart: re-fetch insights, with a local fallback so the chip
     // lights even if /dataset's file-based detection doesn't surface the imported table.
+    // Guard the writes against a teardown/reconnect during the awaits (supersession), so a
+    // stale add can't land on a newer session. The table name is still returned regardless.
+    const token = get().lifecycle();
     const info = await fetchDatasetInfo(base);
-    if (info) set({ datasetInfo: info });
-    else set({ dataset: { workingDir: get().workingDir, fileName: name, sizeBytes: 0 } });
+    if (get().lifecycle() === token) {
+      if (info) set({ datasetInfo: info });
+      else set({ dataset: { workingDir: get().workingDir, fileName: name, sizeBytes: 0 } });
+    }
     return name;
   },
 

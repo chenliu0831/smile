@@ -23,6 +23,13 @@ export interface ConnectionSlice {
   connect: (workingDir?: string) => Promise<void>;
   /** Tear down the live connection (unmount / before reconnect). */
   teardown: () => void;
+  /**
+   * The current connection-lifecycle token. Any async action that resolves and then writes
+   * connection-scoped state (e.g. dataset insights) should capture this before its await and
+   * bail if it changed — the same supersession guard `connect()` uses, so a stale daemon's
+   * late result can't land on a newer session. Bumped by every connect() and teardown().
+   */
+  lifecycle: () => number;
   /** Send a free-text user turn (guarded: one turn at a time). */
   sendMessage: (text: string) => void;
   /** Answer an open clarify gate with free text (or a chosen option). */
@@ -54,6 +61,8 @@ export const createConnectionSlice =
       connection: null,
       httpBase: null,
       mode: "demo",
+
+      lifecycle: () => epoch,
 
       connect: async (workingDir = ".") => {
         const myEpoch = ++epoch;
