@@ -15,7 +15,7 @@ function formatSize(bytes: number): string {
 }
 
 export function Topbar() {
-  const { state, dataset, datasetInfo, canLoadDataset, addData, mode } = useRunContext();
+  const { state, dataset, datasetInfo, canLoadDataset, addData, mode, reconnect } = useRunContext();
   const hasDataset = selectHasDataset(datasetInfo, dataset);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -57,11 +57,17 @@ export function Topbar() {
 
       <span className="spacer" />
 
-      {/* Connection mode — so a failed daemon can never masquerade as real analysis. */}
+      {/* Connection mode — so a failed daemon can never masquerade as real analysis. A
+          Reconnect button gives a way out of the error state without restarting the app. */}
       {mode === "error" && (
-        <span className="mode-badge error" title="The analysis daemon could not start. Open Settings and check the LLM credential, then relaunch.">
-          ● No daemon
-        </span>
+        <>
+          <span className="mode-badge error" title="The analysis daemon isn't connected. Check the LLM credential in Settings, then Reconnect.">
+            ● No daemon
+          </span>
+          <button className="topbar-btn" onClick={() => reconnect()} title="Retry connecting to the daemon with the current settings">
+            Reconnect
+          </button>
+        </>
       )}
 
       <button
@@ -90,7 +96,9 @@ export function Topbar() {
         ⚙
       </button>
       {error && <span className="topbar-error" title={error}>⚠</span>}
-      {settingsOpen && <SettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && (
+        <SettingsDialog onClose={() => setSettingsOpen(false)} onSaved={() => reconnect()} />
+      )}
     </div>
   );
 }

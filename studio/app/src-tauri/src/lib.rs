@@ -26,6 +26,7 @@
 //! JSON Schema in `tests/contract_conformance.rs`.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
@@ -182,6 +183,31 @@ fn kill_taken(daemon: Option<RunningDaemon>) {
     }
 }
 
+/// Session-only LLM credentials pasted in the Settings dialog: provider -> key. Held in
+/// memory for this process only — NEVER written to disk, the store, or any log (so there's
+/// no plaintext-on-disk and no OS-keychain re-prompt friction). Re-entered each launch. The
+/// environment variable still takes precedence when set, so existing env-based setups are
+/// unaffected; this is the override for a double-clicked app that inherits no shell env.
+#[derive(Default)]
+pub struct SessionCredentials(Mutex<HashMap<String, String>>);
+
+impl SessionCredentials {
+    fn get(&self, provider: &str) -> Option<String> {
+        self.0.lock().unwrap().get(provider).cloned().filter(|k| !k.is_empty())
+    }
+    fn set(&self, provider: String, key: String) {
+        let mut m = self.0.lock().unwrap();
+        if key.is_empty() {
+            m.remove(&provider);
+        } else {
+            m.insert(provider, key);
+        }
+    }
+    fn has(&self, provider: &str) -> bool {
+        self.get(provider).is_some()
+    }
+}
+
 pub struct RunningDaemon {
     child: Child,
     port: u16,
@@ -242,16 +268,15 @@ fn daemon_info(state: State<DaemonState>) -> DaemonInfo {
 }
 
 #[tauri::command]
-fn get_llm_config(app: tauri::AppHandle) -> Result<LlmConfig, String> {
+fn get_llm_config(app: tauri::AppHandle, creds: State<SessionCredentials>) -> Result<LlmConfig, String> {
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     let mut cfg: LlmConfig = store
         .get(CONFIG_KEY)
         .and_then(|v| serde_json::from_value(v).ok())
         .unwrap_or_default();
-    // The credential is read from the provider's environment variable (e.g.
-    // AWS_BEARER_TOKEN_BEDROCK), not stored by the app. has_key reflects whether that var
-    // is set in the Shell's environment.
-    cfg.has_key = !credential_for(&cfg.provider).is_empty();
+    // has_key reflects whether a credential is available from EITHER the provider's env var
+    // OR the session-only key pasted in Settings (in-memory). The value never reaches here.
+    cfg.has_key = !credential_for(&cfg.provider, &creds).is_empty();
     Ok(cfg)
 }
 
@@ -269,15 +294,25 @@ fn set_llm_config(
     Ok(())
 }
 
-/// The LLM credential for a provider, read from its environment variable (never persisted).
-fn credential_for(provider: &str) -> String {
-    std::env::var(token_env_var(provider)).unwrap_or_default()
+/// Set (or clear, if empty) the session-only credential for a provider. Held in memory for
+/// this process only — never persisted to disk/store/logs. The env var still takes precedence.
+#[tauri::command]
+fn set_session_credential(creds: State<SessionCredentials>, provider: String, key: String) {
+    creds.set(provider, key);
 }
 
-/// Spawns the daemon JVM configured from the saved LLM config + the credential read from
-/// the provider's environment variable, on a free loopback port, and waits until it is
-/// listening. The agent's working directory is `working_dir` (where `input/<dataset>.csv`
-/// lives). Returns the live connection info.
+/// The LLM credential for a provider: the provider's environment variable if set, else the
+/// session-only key pasted in Settings (in-memory, never persisted). Env wins so existing
+/// env-based setups are unchanged; the session store is the override for a GUI launch that
+/// inherits no shell env. Returns "" when neither is present.
+fn credential_for(provider: &str, creds: &SessionCredentials) -> String {
+    let env = std::env::var(token_env_var(provider)).unwrap_or_default();
+    if !env.is_empty() {
+        return env;
+    }
+    creds.get(provider).unwrap_or_default()
+}
+
 /// Resolve the daemon's working directory. The webview passes "." as a cold-start sentinel
 /// meaning "no dataset loaded — use the default workspace". Tauri runs the shell binary from
 /// src-tauri/, so a literal "." would put the agent in the SOURCE TREE; resolve it instead to
@@ -300,10 +335,14 @@ fn resolve_working_dir(working_dir: &str) -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
+/// Spawns the daemon JVM configured from the saved LLM config + the resolved credential (env
+/// var, else session key), on a free loopback port, and waits until it is listening. The
+/// agent's working directory is `working_dir`. Returns the live connection info.
 #[tauri::command]
 fn start_daemon(
     app: tauri::AppHandle,
     state: State<DaemonState>,
+    creds: State<SessionCredentials>,
     working_dir: String,
 ) -> Result<DaemonInfo, String> {
     let working_dir = resolve_working_dir(&working_dir);
@@ -322,11 +361,11 @@ fn start_daemon(
         }
     }
 
-    let cfg = get_llm_config(app)?;
-    let credential = credential_for(&cfg.provider);
-    // No credential in the environment → don't spawn a doomed daemon; the Webview falls
-    // back to the mock. The user sets the provider's token env var (e.g.
-    // AWS_BEARER_TOKEN_BEDROCK in ~/.zshrc) and relaunches.
+    let cfg = get_llm_config(app, creds.clone())?;
+    let credential = credential_for(&cfg.provider, &creds);
+    // No credential (neither env var nor a session key pasted in Settings) → don't spawn a
+    // doomed daemon. The user sets the provider's token env var (e.g. AWS_BEARER_TOKEN_BEDROCK)
+    // OR pastes a key in Settings, then reconnects.
     if credential.is_empty() {
         return Err(format!(
             "no LLM credential found — set {} in your environment (e.g. ~/.zshrc) and relaunch",
@@ -521,6 +560,7 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .manage(DaemonState::default())
+        .manage(SessionCredentials::default())
         .on_window_event(|window, event| {
             // Kill the daemon when the main window closes.
             if let tauri::WindowEvent::Destroyed = event {
@@ -533,6 +573,7 @@ pub fn run() {
             daemon_info,
             get_llm_config,
             set_llm_config,
+            set_session_credential,
             start_daemon,
             stop_daemon,
             load_dataset,
@@ -692,6 +733,44 @@ mod tests {
         assert_ne!(resolved, ""); // never empty
         if let Some(v) = prevlaunch {
             std::env::set_var("SMILE_STUDIO_LAUNCH_DIR", v);
+        }
+    }
+
+    #[test]
+    fn session_credentials_set_get_has_and_clear() {
+        let c = SessionCredentials::default();
+        assert!(!c.has("anthropic"));
+        c.set("anthropic".into(), "sk-ant-123".into());
+        assert_eq!(c.get("anthropic").as_deref(), Some("sk-ant-123"));
+        assert!(c.has("anthropic"));
+        // empty key clears it (so a blank Settings field removes the override)
+        c.set("anthropic".into(), "".into());
+        assert!(!c.has("anthropic"));
+        assert_eq!(c.get("anthropic"), None);
+    }
+
+    #[test]
+    fn credential_for_prefers_env_then_session_key() {
+        // Use a provider whose env var we can safely toggle in this test.
+        let creds = SessionCredentials::default();
+        let var = token_env_var("anthropic"); // ANTHROPIC_API_KEY
+        let prev = std::env::var(var).ok();
+
+        // No env, no session key → empty.
+        std::env::remove_var(var);
+        assert_eq!(credential_for("anthropic", &creds), "");
+
+        // Session key only → used.
+        creds.set("anthropic".into(), "sess-key".into());
+        assert_eq!(credential_for("anthropic", &creds), "sess-key");
+
+        // Env var set → WINS over the session key.
+        std::env::set_var(var, "env-key");
+        assert_eq!(credential_for("anthropic", &creds), "env-key");
+
+        match prev {
+            Some(v) => std::env::set_var(var, v),
+            None => std::env::remove_var(var),
         }
     }
 }

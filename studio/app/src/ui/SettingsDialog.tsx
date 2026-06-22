@@ -1,18 +1,28 @@
 /**
  * LLM configuration dialog (ADR-0001), mirroring Smile Studio's Settings: AI service
- * (provider), base URL, model. Config persists via the Shell's store. The credential is
- * NOT entered here — it's read from the provider's environment variable (e.g.
- * AWS_BEARER_TOKEN_BEDROCK); the dialog only shows whether that var is set. This avoids the
- * OS keychain, which re-prompted for access on every `tauri dev` rebuild.
+ * (provider), base URL, model, and an optional credential override. Config persists via the
+ * Shell's store. The credential is read from the provider's environment variable (e.g.
+ * AWS_BEARER_TOKEN_BEDROCK) when set; if it isn't, you can paste a key here — it's held in the
+ * Shell's MEMORY for this session only (never written to disk, no OS-keychain re-prompts) and
+ * must be re-entered each launch. On save the session reconnects so the new config takes effect.
  */
 import { useEffect, useState } from "react";
-import { getLlmConfig, setLlmConfig, PROVIDERS, PROVIDER_ENV_VAR, type LlmConfig } from "../daemon/llmConfig";
+import {
+  getLlmConfig,
+  setLlmConfig,
+  setSessionCredential,
+  PROVIDERS,
+  PROVIDER_ENV_VAR,
+  type LlmConfig,
+} from "../daemon/llmConfig";
 
-export function SettingsDialog({ onClose }: { onClose: () => void }) {
+export function SettingsDialog({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
   const [provider, setProvider] = useState<LlmConfig["provider"]>("bedrock");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [hasKey, setHasKey] = useState(false);
+  /** Pasted credential override (write-only — never populated from the Shell). */
+  const [credential, setCredential] = useState("");
   const [saving, setSaving] = useState(false);
   const [loaded, setLoaded] = useState(false);
 
@@ -37,7 +47,14 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
     setSaving(true);
     try {
       await setLlmConfig({ provider, baseUrl, model });
-      // Stop any running daemon so the next run is spawned with the new config.
+      // If the user pasted a key, store it in-session for this provider (memory only).
+      if (credential.trim()) {
+        await setSessionCredential(provider, credential.trim());
+      }
+      // Stop the running daemon so it's re-spawned with the new config. REQUIRED: start_daemon
+      // reuses a running daemon when the working dir is unchanged, so without this the new
+      // provider/credential wouldn't take effect. (Previously save() stopped here but never
+      // reconnected — leaving the UI stuck on a dead connection. onSaved() now reconnects.)
       if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
         try {
           const { invoke } = await import("@tauri-apps/api/core");
@@ -47,6 +64,8 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
         }
       }
       onClose();
+      // Reconnect so the new config takes effect immediately and the UI leaves any error state.
+      onSaved?.();
     } finally {
       setSaving(false);
     }
@@ -66,15 +85,26 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
           </select>
         </label>
 
-        <div className="field">
+        <label className="field">
           <span>Credential</span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={credential}
+            placeholder={hasKey ? "stored ✓ — paste to replace" : `paste ${provider} key, or set ${envVar}`}
+            onChange={(e) => setCredential(e.target.value)}
+          />
           <div className="cred-status">
-            Read from the <code>{envVar}</code> environment variable.{" "}
-            {hasKey
-              ? <em className="key-set">detected ✓</em>
-              : <em className="key-missing">not set — add it to your shell profile (e.g. ~/.zshrc) and relaunch</em>}
+            {hasKey ? (
+              <em className="key-set">credential available ✓ (from {envVar} or this session)</em>
+            ) : (
+              <em className="key-missing">
+                no credential — read from <code>{envVar}</code>, or paste one above (kept in memory
+                for this session only, never saved to disk)
+              </em>
+            )}
           </div>
-        </div>
+        </label>
 
         <label className="field">
           <span>Base URL{needsBaseUrl ? " (required)" : " (optional)"}</span>

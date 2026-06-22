@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from "vitest";
-import { getLlmConfig, setLlmConfig, PROVIDER_ENV_VAR } from "./llmConfig";
+import { getLlmConfig, setLlmConfig, setSessionCredential, PROVIDER_ENV_VAR } from "./llmConfig";
 
 beforeEach(() => localStorage.clear());
 
@@ -25,4 +25,11 @@ test("each provider maps to its credential environment variable", () => {
   expect(PROVIDER_ENV_VAR.openai).toBe("OPENAI_API_KEY");
   expect(PROVIDER_ENV_VAR.gemini).toBe("GOOGLE_API_KEY");
   expect(PROVIDER_ENV_VAR.anthropic).toBe("ANTHROPIC_API_KEY");
+});
+
+test("setSessionCredential is a safe no-op outside Tauri (browser dev has no Shell)", async () => {
+  // Must not throw and must not persist anything to localStorage (the key is memory-only,
+  // and there's no Shell to hold it in browser dev).
+  await expect(setSessionCredential("anthropic", "sk-ant-xyz")).resolves.toBeUndefined();
+  expect(localStorage.getItem("smile.studio.llmConfig")).toBeNull();
 });

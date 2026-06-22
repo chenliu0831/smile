@@ -81,3 +81,18 @@ export async function setLlmConfig(cfg: Omit<LlmConfig, "hasKey">): Promise<void
   // which the browser can't see, so hasKey stays false here.
   localStorage.setItem(LS_KEY, JSON.stringify({ ...cfg, hasKey: false }));
 }
+
+/**
+ * Set (or clear, with an empty string) a SESSION-ONLY credential for a provider — held in the
+ * Shell's memory for this process only, never persisted to disk. The provider's env var still
+ * takes precedence; this is the override for a launch that inherits no shell env. No-op outside
+ * Tauri (browser dev has no Shell to hold it). The key value never round-trips back to the UI.
+ */
+export async function setSessionCredential(
+  provider: LlmConfig["provider"],
+  key: string,
+): Promise<void> {
+  if (!inTauri()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("set_session_credential", { provider, key });
+}
