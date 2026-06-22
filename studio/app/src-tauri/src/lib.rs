@@ -201,10 +201,13 @@ fn repo_root() -> std::path::PathBuf {
         .unwrap_or_else(|| std::path::PathBuf::from("."))
 }
 
-/// Path for the daemon's redirected stdout/stderr log: `<app_data_dir>/logs/daemon.log`.
-/// Returns None if the app data dir can't be resolved (then stdio is left inherited).
-fn daemon_log_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
-    let dir = app.path().app_data_dir().ok()?.join("logs");
+/// Path for the daemon's redirected stdout/stderr log: `<launch-cwd>/logs/daemon.log`.
+/// Uses the directory the app was STARTED from (the Shell process's current dir) so the log
+/// sits right next to where you launched it — e.g. start in /path/to/proj → /path/to/proj/logs.
+/// Returns None if the cwd can't be resolved or the logs dir can't be created (stdio is then
+/// left inherited).
+fn daemon_log_path() -> Option<std::path::PathBuf> {
+    let dir = std::env::current_dir().ok()?.join("logs");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("daemon.log"))
 }
@@ -296,7 +299,7 @@ fn start_daemon(
         }
     }
 
-    let cfg = get_llm_config(app.clone())?; // clone: app is still needed for the daemon log path
+    let cfg = get_llm_config(app)?;
     let credential = credential_for(&cfg.provider);
     // No credential in the environment → don't spawn a doomed daemon; the Webview falls
     // back to the mock. The user sets the provider's token env var (e.g.
@@ -347,7 +350,7 @@ fn start_daemon(
     // inherits the Shell's stdio, so when the app exits the daemon's output is gone — leaving
     // nothing to diagnose a hang after the fact. The path is logged so it's easy to find/tail.
     // Truncated each launch (one daemon at a time); the JVM's own logger timestamps each line.
-    let log_path = daemon_log_path(&app);
+    let log_path = daemon_log_path();
     match log_path
         .as_ref()
         .and_then(|p| std::fs::File::create(p).ok())

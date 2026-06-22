@@ -2,3 +2,11 @@ node_modules
 dist
 src-tauri/target
 *.log
+
+# Daemon runtime artifacts created in src-tauri/ (its CWD in `tauri dev`): a stray dataset in
+# input/ would otherwise be auto-detected as a phantom "loaded" dataset; output/, logs/, and
+# checkpoints are automl run artifacts. None belong in the source tree.
+src-tauri/input/
+src-tauri/output/
+src-tauri/logs/
+src-tauri/final/

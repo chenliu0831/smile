@@ -62,16 +62,20 @@ test("saveAsTable surfaces a 409 (name taken) so the UI can offer overwrite", as
   expect(tables).toContain("taken");
 });
 
-test("/dataset returns the real titanic schema + preview (891×12)", async () => {
-  const info = await fetchDatasetInfo(BASE, false, fixtureFetch);
+test("/dataset returns the named table's schema + preview (titanic, 891×12)", async () => {
+  const info = await fetchDatasetInfo(BASE, "titanic", false, fixtureFetch);
   expect(info).not.toBeNull();
-  expect(info!.fileName).toBe("titanic.csv");
+  expect(info!.fileName).toBe("titanic"); // the session-table name (new contract — not a file)
   expect(info!.nrow).toBe(891);
   expect(info!.ncol).toBe(12);
   expect(Object.keys(info!.preview)).toContain("PassengerId");
 });
 
+test("fetchDatasetInfo returns null for an unknown table (404, never throws)", async () => {
+  expect(await fetchDatasetInfo(BASE, "no_such_table", false, fixtureFetch)).toBeNull();
+});
+
 test("fetchDatasetInfo returns null (never throws) on a daemon error", async () => {
   const failing: typeof fetch = async () => new Response("nope", { status: 500 });
-  expect(await fetchDatasetInfo(BASE, false, failing)).toBeNull();
+  expect(await fetchDatasetInfo(BASE, "titanic", false, failing)).toBeNull();
 });

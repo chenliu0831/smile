@@ -79,7 +79,10 @@ export const createConnectionSlice =
         conn.start();
         const base = conn.httpBase();
         set({ connection: conn, mode, httpBase: base });
-        // If a real daemon is attached, fetch native dataset insights (data slice owns it).
+        // Refresh insights for the PRIMARY imported table if one is in scope (e.g. across a
+        // reconnect). On a cold connect there is no primary table, so this is a no-op and the
+        // chip stays empty — NO filesystem auto-discovery, so a stray input/ file can't
+        // masquerade as a loaded dataset (the phantom-load bug).
         if (base) get().refreshDatasetInfo(base);
         else get().setDatasetInfo(null);
       },

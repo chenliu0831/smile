@@ -74,7 +74,10 @@ final class DataContext {
             sb.append("To summarize/EDA/AutoML on a table, read it via SQL (or `COPY <table> TO 'input/<table>.csv' (HEADER)` first if a skill needs a file).\n");
         }
         if (!files.isEmpty()) {
-            sb.append("Files in ./input/: ").append(String.join(", ", files)).append('\n');
+            // Secondary: the DuckDB tables above are the primary data; input/ files are the
+            // ADR-0005 path convention for skills that need a file on disk.
+            sb.append("Also available as files in ./input/ (for skills that need a path): ")
+              .append(String.join(", ", files)).append('\n');
         }
         // The UI renders a rich EDA canvas from files the agent leaves behind: a markdown
         // summary and any PNG charts. Nudge the agent to persist them so summarization isn't

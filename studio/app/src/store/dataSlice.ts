@@ -23,12 +23,19 @@ import type { RunStore } from "./runStore";
 export interface DataSlice {
   /** The dataset currently in scope (staged into the agent's input/), if any. */
   dataset: LoadedDataset | null;
-  /** Native schema + preview of the loaded dataset (from the daemon), if available. */
+  /**
+   * The PRIMARY imported dataset's session-table name — the one the user explicitly imported
+   * via Add data. This is what "a dataset is loaded" means now (NOT a file in input/); the
+   * chip + datasetInfo track it. Agent-created / "Save as table" tables live in the Tables
+   * panel but are not the primary dataset.
+   */
+  primaryTable: string | null;
+  /** Native schema + preview of the primary dataset (from the daemon), if available. */
   datasetInfo: DatasetInfo | null;
   /** Whether dataset loading is available (desktop app only). */
   canLoadDataset: boolean;
   setDatasetInfo: (info: DatasetInfo | null) => void;
-  /** Re-fetch the daemon's dataset insights for `httpBase` into state. */
+  /** Re-fetch the daemon's insights for the primary table into state (no-op if none). */
   refreshDatasetInfo: (httpBase: string) => Promise<void>;
   /**
    * The single "Add data" action: pick a file, stage it into the RUNNING daemon's input/
@@ -46,19 +53,25 @@ export interface DataSlice {
 
 export const createDataSlice: StateCreator<RunStore, [], [], DataSlice> = (set, get) => ({
   dataset: null,
+  primaryTable: null,
   datasetInfo: null,
   canLoadDataset: canLoadDataset(),
 
   setDatasetInfo: (info) => set({ datasetInfo: info }),
 
   refreshDatasetInfo: async (httpBase) => {
+    // Only the PRIMARY imported table has insights to show; with none imported there is no
+    // dataset (no filesystem auto-discovery — that was the phantom-load bug).
+    const table = get().primaryTable;
+    if (!table) {
+      set({ datasetInfo: null });
+      return;
+    }
     // Guard against supersession the same way connect() does: capture the lifecycle token
     // before the await, and drop the result if a teardown/reconnect happened meanwhile — so a
-    // stale daemon's late /dataset response can't resurrect old (or blank) insights onto a
-    // newer session. connect() fires this un-awaited, so it is NOT covered by connect()'s own
-    // epoch check; it must re-check here.
+    // stale daemon's late /dataset response can't resurrect old insights onto a newer session.
     const token = get().lifecycle();
-    const info = await fetchDatasetInfo(httpBase);
+    const info = await fetchDatasetInfo(httpBase, table);
     if (get().lifecycle() !== token) return;
     set({ datasetInfo: info });
   },
@@ -94,15 +107,13 @@ export const createDataSlice: StateCreator<RunStore, [], [], DataSlice> = (set, 
     // ./input/<file> convention (ADR-0005). Best-effort: the imported table is the primary
     // access path, so a staging failure must not fail the add.
     await stageDataset(path).catch(() => {/* table import already succeeded */});
-    // Reflect it without a restart: re-fetch insights, with a local fallback so the chip
-    // lights even if /dataset's file-based detection doesn't surface the imported table.
+    // This imported table IS now the primary dataset; fetch its insights for the chip + grid.
     // Guard the writes against a teardown/reconnect during the awaits (supersession), so a
     // stale add can't land on a newer session. The table name is still returned regardless.
     const token = get().lifecycle();
-    const info = await fetchDatasetInfo(base);
+    const info = await fetchDatasetInfo(base, name);
     if (get().lifecycle() === token) {
-      if (info) set({ datasetInfo: info });
-      else set({ dataset: { workingDir: get().workingDir, fileName: name, sizeBytes: 0 } });
+      set({ primaryTable: name, datasetInfo: info });
     }
     return name;
   },
@@ -110,7 +121,9 @@ export const createDataSlice: StateCreator<RunStore, [], [], DataSlice> = (set, 
   loadDataset: async () => {
     const loaded = await pickAndLoadDataset();
     if (!loaded) return; // cancelled
-    set({ dataset: loaded, datasetInfo: null }); // info cleared until the new daemon reports it
+    // Cleared until the user imports into the new session; the cold path copies a file into a
+    // fresh session dir but does NOT itself create a session table, so there's no primary yet.
+    set({ dataset: loaded, primaryTable: null, datasetInfo: null });
     get().reconnect(loaded.workingDir); // reset session + reconnect against the new working dir
   },
 });

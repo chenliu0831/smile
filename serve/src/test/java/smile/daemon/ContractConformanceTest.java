@@ -182,7 +182,8 @@ public class ContractConformanceTest {
     public void restDatasetAndTablesConform() {
         var col = new DatasetResource.ColumnInfo("PassengerId", "int");
         var preview = Map.<String, List<Object>>of("PassengerId", List.of(1, 2, 3));
-        assertConforms("DatasetInfo", new DatasetResource.DatasetInfo("titanic.csv", 891, 12, List.of(col), preview));
+        // fileName is the session-table name now (not a file path) — /dataset projects a named table.
+        assertConforms("DatasetInfo", new DatasetResource.DatasetInfo("titanic", 891, 12, List.of(col), preview));
 
         var tcol = new TablesResource.ColumnInfo("PassengerId", "BIGINT");
         assertConforms("TableInfo", new TablesResource.TableInfo("titanic", List.of(tcol), null));

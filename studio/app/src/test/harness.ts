@@ -154,7 +154,16 @@ export const fixtureFetch: typeof fetch = (async (input: RequestInfo | URL, init
   }
 
   if (path.endsWith("/tables")) return jsonResponse(readJson("tables.json"));
-  if (path.endsWith("/dataset")) return jsonResponse(readJson("dataset-titanic.json"));
+  if (path.endsWith("/dataset")) {
+    // /dataset now projects a NAMED session table (no filesystem scan). Honor ?table=:
+    // return the captured titanic insights (with fileName = the table name, the new contract)
+    // only for the known table; 404 otherwise, as the daemon does for an unknown table.
+    const table = new URL(url, "http://x").searchParams.get("table");
+    if (table === "titanic") {
+      return jsonResponse({ ...readJson("dataset-titanic.json"), fileName: "titanic" });
+    }
+    return jsonResponse({ error: `No such table in the session: ${table}` }, 404);
+  }
 
   const dataMatch = path.match(/\/data\/([^/?]+)$/);
   if (dataMatch) {

@@ -40,9 +40,9 @@ test("addData stages into the running daemon, imports as a table, and refreshes 
   pickDatasetFile.mockResolvedValue("/data/customers.csv");
   stageDataset.mockResolvedValue("customers.csv");
   runSql.mockResolvedValue({ kind: "ddl", ok: true, rowsAffected: null, tables: ["customers"] });
-  fetchDatasetInfo
-    .mockResolvedValueOnce(null) // initial connect fetch (no dataset yet)
-    .mockResolvedValueOnce({ fileName: "customers.csv", nrow: 240, ncol: 7, columns: [], preview: {} });
+  // No connect-time fetch any more (no primary table on cold connect); the only fetch is the
+  // post-import one for the newly-imported table, which reports the SESSION-TABLE name.
+  fetchDatasetInfo.mockResolvedValue({ fileName: "customers", nrow: 240, ncol: 7, columns: [], preview: {} });
 
   const { result } = renderHook(() => useRun(fixtureConnect({ httpBase: "http://127.0.0.1:0/api/v1" })));
   // wait for the fixture connection to attach an httpBase
@@ -59,8 +59,10 @@ test("addData stages into the running daemon, imports as a table, and refreshes 
     result.current.httpBase,
     expect.stringMatching(/^create table "customers" as select \* from read_csv/i),
   );
-  // chip lights up via a re-fetch (no JVM restart)
-  await waitFor(() => expect(result.current.datasetInfo?.fileName).toBe("customers.csv"));
+  // fetchDatasetInfo is now called with the imported TABLE NAME (not a bare base)
+  expect(fetchDatasetInfo).toHaveBeenCalledWith(result.current.httpBase, "customers");
+  // chip lights up from the real session table (no JVM restart)
+  await waitFor(() => expect(result.current.datasetInfo?.fileName).toBe("customers"));
 });
 
 test("addData disambiguates with a suffix instead of clobbering an existing table", async () => {

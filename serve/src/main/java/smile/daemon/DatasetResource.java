@@ -16,35 +16,30 @@
  */
 package smile.daemon;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
+import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
-import smile.data.DataFrame;
-import smile.data.type.StructType;
-import smile.io.Read;
+import ioa.llm.tool.SharedSql.Column;
+import ioa.llm.tool.ToolException;
 
 /**
- * Native dataset insights (P3): loads the dataset in the daemon's working dir
- * {@code input/} via {@link smile.io.Read#data} and serves its schema, row/column
- * counts, and a bounded preview as JSON. This gives the UI (and, when wired, the agent)
- * a TRUE view of the data — schema and real values — instead of relying on the LLM to
- * read raw CSV text (which the smaller models do unreliably).
+ * Native dataset insights — schema, row/column counts, and a bounded preview for a NAMED
+ * table in the shared DuckDB session. This gives the UI (and the agent) a true view of a
+ * real, imported table's schema + values, projected straight from DuckDB.
  *
- * <p>Endpoints under {@code /api/v1}:
- * <ul>
- *   <li>{@code GET /dataset} — schema + nrow/ncol + a preview slice (column-oriented JSON
- *       the frontend feeds straight into the Perspective grid via its Arrow seam).</li>
- * </ul>
+ * <p>Deliberately NOT a filesystem scan. The previous version returned "the first file in
+ * {@code <cwd>/input/}", which made a stale leftover file masquerade as a loaded dataset
+ * (and coupled "loaded" to the daemon's working directory). "Loaded" now means a real
+ * queryable session table — the same source of truth as {@link TablesResource} — created by
+ * an explicit import (CREATE TABLE … read_csv via {@code /sql}) or by the agent.
+ *
+ * <p>Endpoint: {@code GET /api/v1/dataset?table=NAME&rows=N&full=true}.
  *
  * @author Haifeng Li
  */
@@ -60,6 +55,7 @@ public class DatasetResource {
 
     /** The dataset summary + preview returned to the UI. */
     public record DatasetInfo(
+            /** The session table name (shown as the dataset name in the UI). */
             String fileName,
             int nrow,
             int ncol,
@@ -68,75 +64,50 @@ public class DatasetResource {
             Map<String, List<Object>> preview) {}
 
     /**
-     * Loads the single dataset in {@code <cwd>/input/} and returns its insights.
+     * Returns schema + a bounded preview for the named session table, projected from DuckDB.
      *
-     * @param rows preview row cap (default {@value #MAX_PREVIEW_ROWS}).
-     * @param full when true, return up to {@value #MAX_FULL_ROWS} rows for the explorer
-     *             (live pivot/filter/aggregate needs the whole frame, not a preview).
+     * @param table the session table name (a plain SQL identifier). Required.
+     * @param rows  preview row cap (default {@value #MAX_PREVIEW_ROWS}).
+     * @param full  when true, return up to {@value #MAX_FULL_ROWS} rows for the explorer
+     *              (live pivot/filter/aggregate needs the whole frame, not a preview).
      */
     @GET
     @Produces(MediaType.APPLICATION_JSON)
-    public DatasetInfo dataset(@QueryParam("rows") Integer rows, @QueryParam("full") boolean full) {
-        Path file = findDataset();
-        if (file == null) {
-            throw new NotFoundException("No dataset found in input/");
+    public DatasetInfo dataset(@QueryParam("table") String table,
+                               @QueryParam("rows") Integer rows,
+                               @QueryParam("full") boolean full) {
+        if (table == null || table.isBlank()) {
+            throw new BadRequestException("Query parameter 'table' is required.");
+        }
+        if (!SessionTables.isValidIdentifier(table)) {
+            throw new BadRequestException("Invalid table name: " + table);
         }
         try {
-            DataFrame df = load(file);
+            if (!SessionTables.exists(table)) {
+                throw new NotFoundException("No such table in the session: " + table);
+            }
+            List<Column> cols = SessionTables.columns(table);
+            List<ColumnInfo> columns = new ArrayList<>(cols.size());
+            for (Column c : cols) {
+                columns.add(new ColumnInfo(c.name(), c.type()));
+            }
+
             int cap = full ? MAX_FULL_ROWS : MAX_PREVIEW_ROWS;
             int limit = Math.min(rows != null && rows > 0 ? rows : cap, cap);
-            limit = Math.min(limit, df.nrow());
+            // Column-oriented preview straight from the DuckDB session.
+            Map<String, List<Object>> preview = SessionTables.columnTable(table, cols, limit);
 
-            StructType schema = df.schema();
-            String[] names = schema.names();
-            var dtypes = schema.dtypes();
-            List<ColumnInfo> columns = new ArrayList<>(names.length);
-            for (int j = 0; j < names.length; j++) {
-                columns.add(new ColumnInfo(names[j], dtypes[j].name()));
-            }
-
-            DataFrame head = limit < df.nrow() ? df.slice(0, limit) : df;
-            Map<String, List<Object>> preview = new LinkedHashMap<>();
-            for (String name : names) {
-                var vec = head.column(name);
-                List<Object> values = new ArrayList<>(head.nrow());
-                for (int i = 0; i < head.nrow(); i++) {
-                    values.add(vec.get(i));
-                }
-                preview.put(name, values);
-            }
-
-            return new DatasetInfo(file.getFileName().toString(), df.nrow(), df.ncol(), columns, preview);
-        } catch (Exception e) {
-            LOG.errorf("Failed to load dataset %s: %s", file, e.getMessage());
-            throw new NotFoundException("Failed to load dataset: " + e.getMessage());
-        }
-    }
-
-    /**
-     * Loads a dataset, honoring CSV/TSV headers. {@code Read.data} defaults CSV to
-     * no-header, all-String (which would treat the header row as data); for delimited
-     * text we request {@code header=true} so column names and types are inferred.
-     */
-    private static DataFrame load(Path file) throws Exception {
-        String name = file.getFileName().toString().toLowerCase();
-        if (name.endsWith(".csv")) {
-            return Read.csv(file.toString(), "header=true");
-        }
-        if (name.endsWith(".tsv")) {
-            return Read.csv(file.toString(), "delimiter=\t,header=true");
-        }
-        return Read.data(file.toString());
-    }
-
-    /** Finds the first regular file under {@code <cwd>/input/}. */
-    private static Path findDataset() {
-        Path inputDir = Path.of(System.getProperty("user.dir"), "input");
-        if (!Files.isDirectory(inputDir)) return null;
-        try (Stream<Path> files = Files.list(inputDir)) {
-            return files.filter(Files::isRegularFile).findFirst().orElse(null);
-        } catch (IOException e) {
-            return null;
+            // nrow = rows in the preview (the first column's length; columnTable returns
+            // equal-length columns). For the default cap (1000) this is the true count for any
+            // table up to that size, and "rows shown" for larger ones — accurate for the chip's
+            // typical imported-dataset case without a separate COUNT(*) round-trip.
+            int nrow = preview.values().stream().findFirst().map(List::size).orElse(0);
+            return new DatasetInfo(table, nrow, columns.size(), columns, preview);
+        } catch (NotFoundException | BadRequestException e) {
+            throw e;
+        } catch (ToolException e) {
+            LOG.errorf("Failed to project table %s: %s", table, e.getMessage());
+            throw new NotFoundException("Failed to read table '" + table + "': " + e.getMessage());
         }
     }
 }

@@ -1,9 +1,9 @@
 /**
- * Fetches native dataset insights from the daemon (P3): schema, row/column counts, and
- * a column-oriented preview computed by smile.io.Read on the daemon side. The UI feeds
- * the preview straight into the Perspective grid (via the DataGrid Arrow seam), so the
- * user sees real schema + values the instant a dataset is loaded — independent of the
- * agent/LLM.
+ * Fetches native dataset insights from the daemon: schema, row/column counts, and a
+ * column-oriented preview for a NAMED table in the shared DuckDB session, projected straight
+ * from DuckDB. The UI feeds the preview into the Perspective grid (via the DataGrid Arrow
+ * seam), so the user sees real schema + values for an imported table — independent of the
+ * agent/LLM. "Loaded" means a real session table, NOT a file in input/.
  */
 export interface ColumnInfo {
   name: string;
@@ -11,6 +11,7 @@ export interface ColumnInfo {
 }
 
 export interface DatasetInfo {
+  /** The session table name (shown as the dataset name in the UI). */
   fileName: string;
   nrow: number;
   ncol: number;
@@ -27,17 +28,23 @@ export function httpBaseFromWs(wsUrl: string): string {
 }
 
 /**
- * Fetch the dataset insights, or null if none is loaded / the daemon is unavailable.
- * `full` requests the whole frame (capped daemon-side) for the interactive explorer;
- * the default returns a bounded preview for the Data panel.
+ * Fetch schema + preview for a named session table, or null if it doesn't exist / the daemon
+ * is unavailable. `full` requests the whole frame (capped daemon-side) for the interactive
+ * explorer; the default returns a bounded preview for the Data panel.
+ *
+ * @param table the session table name (required — there is no filesystem auto-discovery).
  */
 export async function fetchDatasetInfo(
   httpBase: string,
+  table: string,
   full = false,
   fetchFn: typeof fetch = fetch,
 ): Promise<DatasetInfo | null> {
+  if (!table) return null;
   try {
-    const res = await fetchFn(`${httpBase}/dataset${full ? "?full=true" : ""}`);
+    const q = new URLSearchParams({ table });
+    if (full) q.set("full", "true");
+    const res = await fetchFn(`${httpBase}/dataset?${q.toString()}`);
     if (!res.ok) return null;
     return (await res.json()) as DatasetInfo;
   } catch {
