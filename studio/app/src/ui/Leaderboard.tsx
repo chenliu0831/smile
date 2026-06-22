@@ -6,7 +6,8 @@
 import { parseLeaderboard, defaultMetric } from "../lib/leaderboard";
 
 export function Leaderboard({ markdown }: { markdown: string }) {
-  // Mock run is binary churn; the daemon will send the real problem type later.
+  // TODO: the problem type is hard-coded to binary; the daemon should send the real type
+  // (regression/multiclass) so the metric columns match. Tracked as a known limitation.
   const spec = defaultMetric("binary");
   const board = parseLeaderboard(markdown, spec);
 

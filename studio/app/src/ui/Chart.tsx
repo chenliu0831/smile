@@ -1,14 +1,16 @@
 /**
  * Renders a DataViz call (a chart spec, ADR-0007) natively with ECharts. Fetches the
  * backing table from the daemon's /data/{ref} endpoint (which resolves a shared-session
- * DuckDB table, or a built-in demo table), and falls back to the in-process mock in
- * browser-dev (no daemon).
+ * DuckDB table). With no daemon, or if the fetch fails, the chart renders empty (just its
+ * title) — never fabricated data.
  */
 import { useEffect, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import type { DataVizSpec } from "../daemon/protocol";
 import { useRunContext } from "../store/RunContext";
-import { mockTable, type ColumnTable } from "../daemon/mock/mockData";
+
+/** Column-oriented table the /data/{ref} endpoint returns: column name -> values. */
+type ColumnTable = Record<string, (number | string)[]>;
 
 const AXIS = { axisLine: { lineStyle: { color: "#2a3340" } }, axisLabel: { color: "#8b98a8" } };
 const BASE = {
@@ -82,23 +84,23 @@ function buildOption(spec: DataVizSpec, t: ColumnTable | undefined): Record<stri
 
 export function Chart({ spec }: { spec: DataVizSpec }) {
   const { httpBase } = useRunContext();
-  const [table, setTable] = useState<ColumnTable | undefined>(() => mockTable(spec.dataRef.ref));
+  const [table, setTable] = useState<ColumnTable | undefined>(undefined);
 
-  // Prefer real daemon data; fall back to the mock (browser-dev / demo refs).
+  // Fetch the backing table from the daemon. No daemon or a failed fetch → undefined, which
+  // buildOption renders as an empty (titled) chart — never fabricated data.
   useEffect(() => {
     let cancelled = false;
     if (!httpBase) {
-      setTable(mockTable(spec.dataRef.ref));
+      setTable(undefined);
       return;
     }
     fetch(`${httpBase}/data/${encodeURIComponent(spec.dataRef.ref)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((json) => {
-        if (cancelled) return;
-        setTable(json ?? mockTable(spec.dataRef.ref));
+        if (!cancelled) setTable(json ?? undefined);
       })
       .catch(() => {
-        if (!cancelled) setTable(mockTable(spec.dataRef.ref));
+        if (!cancelled) setTable(undefined);
       });
     return () => { cancelled = true; };
   }, [httpBase, spec.dataRef.ref]);

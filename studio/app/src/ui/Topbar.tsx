@@ -57,13 +57,7 @@ export function Topbar() {
 
       <span className="spacer" />
 
-      {/* Connection mode — so the scripted demo or a failed daemon can never masquerade
-          as real analysis of the user's data. */}
-      {mode === "demo" && (
-        <span className="mode-badge demo" title="No daemon attached — this is a scripted sample run, not your data.">
-          ● Demo
-        </span>
-      )}
+      {/* Connection mode — so a failed daemon can never masquerade as real analysis. */}
       {mode === "error" && (
         <span className="mode-badge error" title="The analysis daemon could not start. Open Settings and check the LLM credential, then relaunch.">
           ● No daemon

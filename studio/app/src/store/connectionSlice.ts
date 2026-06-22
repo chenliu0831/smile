@@ -60,13 +60,15 @@ export const createConnectionSlice =
     return {
       connection: null,
       httpBase: null,
-      mode: "demo",
+      // Until connect() resolves there is no daemon; "error" is the honest pre-connect state
+      // (overwritten the moment a real connection attaches). There is no demo mode.
+      mode: "error",
 
       lifecycle: () => epoch,
 
       connect: async (workingDir = ".") => {
         const myEpoch = ++epoch;
-        const { connection: conn, mode } = await connectRun(350, workingDir);
+        const { connection: conn, mode } = await connectRun(workingDir);
         if (myEpoch !== epoch) {
           // Superseded while awaiting — discard this connection rather than wiring it up.
           conn.stop();

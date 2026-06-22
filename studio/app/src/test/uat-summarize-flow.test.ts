@@ -11,7 +11,7 @@ import { fixtureConnect, loadWsScript } from "./harness";
 /** Replay the fixture connection into RunState exactly as useRun's reducer would. */
 async function replay(): Promise<RunState> {
   const connect = fixtureConnect();
-  const { connection } = await connect(0, ".");
+  const { connection } = await connect(".");
   let state = initialRunState;
   connection.subscribe((msg: DaemonMessage) => {
     state = reduceRun(state, msg);

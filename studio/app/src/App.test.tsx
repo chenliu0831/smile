@@ -2,6 +2,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { App } from "./App";
 import { RunProvider } from "./store/RunContext";
 import { RunZones } from "./ui/RunView";
+import { fixtureConnect } from "./test/harness";
 
 test("renders the studio brand", () => {
   render(<App />);
@@ -28,20 +29,26 @@ test("clicking a starter chip sends that prompt as a user turn", async () => {
   );
 });
 
-test("sending a message starts the agent turn and streams pipeline stages", async () => {
+test("sending a message renders the user turn and the agent's streamed response", async () => {
+  // Inject the fixture connection (real captured daemon frames) — there is no demo fallback,
+  // so a bare RunProvider would now connect to nothing. This asserts the App composition
+  // wires send → user turn → agent response; the full summarize flow is covered in
+  // uat-summarize-ui.test.tsx.
   render(
-    <RunProvider>
+    <RunProvider connect={fixtureConnect({ player: { stepMs: 1 } })}>
       <RunZones />
     </RunProvider>,
   );
   await waitFor(() => expect(screen.getByPlaceholderText(/Message Clair/i)).toBeInTheDocument());
 
   const box = screen.getByPlaceholderText(/Message Clair/i);
-  fireEvent.change(box, { target: { value: "analyze churn" } });
+  fireEvent.change(box, { target: { value: "Summarize the dataset" } });
   fireEvent.keyDown(box, { key: "Enter" });
 
-  await waitFor(() => expect(screen.getByText("analyze churn")).toBeInTheDocument());
-  await waitFor(() =>
-    expect(screen.getByText(/Exploratory Data Analysis/i)).toBeInTheDocument(),
+  await waitFor(() => expect(screen.getByText("Summarize the dataset")).toBeInTheDocument());
+  // The agent's real captured response streams into the chat.
+  await waitFor(
+    () => expect(document.body.textContent || "").toMatch(/Titanic Dataset Summary|891 rows/),
+    { timeout: 5000 },
   );
-});
+}, 10000);

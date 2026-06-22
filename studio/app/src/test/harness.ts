@@ -72,8 +72,8 @@ export function fixtureConnect(
     }
     return { connection: player, mode: "daemon" };
   };
-  // connectRun's signature is (stepMs?, workingDir?) => Promise<RunConnectionResult>; the
-  // harness ignores both args. Cast to the exact type for the injection seam.
+  // connectRun's signature is (workingDir?) => Promise<RunConnectionResult>; the harness
+  // ignores the arg. Cast to the exact type for the injection seam.
   return connect as unknown as typeof import("../daemon/connect").connectRun;
 }
 

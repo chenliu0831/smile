@@ -1,9 +1,8 @@
 /**
- * A RunConnection that represents a FAILED daemon connection (ADR-0002). Used in the
- * desktop app when the analysis daemon can't start — instead of silently falling back to
- * the scripted demo (which would play fake results over the user's real data), this
- * surfaces the actual failure reason as a clean agent turn whenever the user sends a
- * message. It never fabricates analysis: no dataset, no churn script, just the error.
+ * A RunConnection that represents an UNAVAILABLE daemon (ADR-0002). Used whenever there is no
+ * daemon to reach — it failed to start in the desktop app, or there is no Tauri shell at all
+ * (plain browser dev). Rather than fabricate a run, it surfaces the actual reason as a clean
+ * agent turn whenever the user sends a message. It never fabricates analysis: just the error.
  */
 import type { DaemonMessage } from "./protocol";
 import type { RunConnection } from "./wsClient";
