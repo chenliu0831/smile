@@ -148,15 +148,27 @@ public class ContractConformanceTest {
 
     @Test
     public void artifactMessagesConform() {
-        // Report artifact with null viz/data (the exact shape the live summarize run emits).
+        // Report artifact with null viz/data/meta (the exact shape the live summarize run emits).
         var report = new DaemonMessage.Artifact("freeform:summary.md", "report", "Data Summary",
-                "# Summary\n...", null, null, "/tmp/work/summary.md");
+                "# Summary\n...", null, null, "/tmp/work/summary.md", null);
         assertConforms("DaemonMessage", new DaemonMessage.ArtifactMsg("run-1", report));
         // Chart artifact carrying a DataVizSpec + ArrowRef.
         var arrow = new DaemonMessage.ArrowRef("arrow", "arrow-roc", 8, 2);
         var viz = new DaemonMessage.DataVizSpec("line", "ROC", Map.of("x", "fpr", "y", "tpr"), arrow);
-        var chart = new DaemonMessage.Artifact("chart:roc", "chart", "ROC Curve", null, viz, arrow, null);
+        var chart = new DaemonMessage.Artifact("chart:roc", "chart", "ROC Curve", null, viz, arrow, null, null);
         assertConforms("DaemonMessage", new DaemonMessage.ArtifactMsg("run-1", chart));
+        // An artifact carrying a JSON `meta` payload (ADR-0011): the new typed channel for
+        // structured data (the metrics/diagnostics kinds will use it). Tested here on an
+        // existing kind — S1 adds the `meta` field only, not new ArtifactKind literals — so
+        // this proves meta round-trips through the schema independent of kind.
+        var meta = MAPPER.valueToTree(Map.of(
+                "task_type", "binary_classification",
+                "primary_metric", "AUC",
+                "test_auc", 0.860,
+                "ensemble_method", "weighted_average"));
+        var withMeta = new DaemonMessage.Artifact("dataframe:preds", "dataframe", "Predictions",
+                null, null, null, null, meta);
+        assertConforms("DaemonMessage", new DaemonMessage.ArtifactMsg("run-1", withMeta));
     }
 
     @Test

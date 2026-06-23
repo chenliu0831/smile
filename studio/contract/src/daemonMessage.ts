@@ -93,10 +93,15 @@ export const Artifact = Open({
   ref: T.String(),
   kind: ArtifactKind,
   title: T.String(),
+  // Markdown text or a `data:` URI only (ADR-0011) — never JSON. Structured payloads ride `meta`.
   body: Opt(T.String()),
   viz: Opt(DataVizSpec),
   data: Opt(ArrowRef),
   path: Opt(T.String()),
+  // Free-form structured JSON payload (ADR-0011): the single typed channel for structured
+  // artifact data (e.g. the `metrics` and `diagnostics` kinds). `T.Any()` keeps the daemon
+  // schema-agnostic — it carries whatever JSON the producer emits, validated by the consumer.
+  meta: Opt(T.Any()),
 });
 
 /** A tool call the agent makes — rendered as a collapsible card (ADR-0006). */

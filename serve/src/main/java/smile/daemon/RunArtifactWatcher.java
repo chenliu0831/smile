@@ -166,7 +166,7 @@ public final class RunArtifactWatcher {
             if (announcedArtifacts.add(key)) {
                 emit.accept(new ArtifactMsg(sessionId,
                     new Artifact("freeform:" + md, "report", "Data Summary",
-                        readBounded(f), null, null, f.toString())));
+                        readBounded(f), null, null, f.toString(), null)));
             }
         }
         // PNG charts written to the cwd root by the summarize/EDA skills. Scoped to the
@@ -190,7 +190,7 @@ public final class RunArtifactWatcher {
                             emit.accept(new ArtifactMsg(sessionId,
                                 new Artifact("img:" + p.getFileName(), "image",
                                     chartTitle(p.getFileName().toString()),
-                                    dataUri, null, null, p.toString())));
+                                    dataUri, null, null, p.toString(), null)));
                         }
                     }
                 });
@@ -245,7 +245,7 @@ public final class RunArtifactWatcher {
             body = readBounded(file);
         }
         return new Artifact(spec.stageId(), spec.artifactKind(), spec.artifactTitle(),
-            body, null, null, file.toString());
+            body, null, null, file.toString(), null);
     }
 
     /** Read a text file, bounded to keep big artifacts from flooding the socket. */

@@ -19,6 +19,7 @@ package smile.daemon;
 import java.util.List;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
  * The typed daemon-to-webview protocol (ADR-0002, ADR-0006). The JSON shapes here
@@ -67,9 +68,13 @@ public sealed interface DaemonMessage {
     record DataVizSpec(String type, String title,
                        java.util.Map<String, String> encodings, ArrowRef dataRef) {}
 
-    /** A run artifact (report | leaderboard | chart | dataframe | file). */
+    /**
+     * A run artifact (report | leaderboard | chart | dataframe | file | image | metrics | diagnostics).
+     * {@code body} carries Markdown or a {@code data:} URI only (ADR-0011); structured JSON payloads
+     * ride {@code meta} (a free-form JsonNode), the single typed channel for structured artifact data.
+     */
     record Artifact(String ref, String kind, String title, String body,
-                    DataVizSpec viz, ArrowRef data, String path) {}
+                    DataVizSpec viz, ArrowRef data, String path, JsonNode meta) {}
 
     // ---- Concrete messages (one per union member in protocol.ts) ----
 

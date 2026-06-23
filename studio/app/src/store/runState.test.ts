@@ -90,6 +90,16 @@ test("artifact adds/replaces by ref at the session level", () => {
   expect(s.artifacts.lb.title).toBe("L2");
 });
 
+test("artifact carries the structured `meta` payload verbatim (ADR-0011)", () => {
+  const meta = { task_type: "binary", test_auc: 0.86, features: [{ name: "Age", mean: 0.038, std: 0.014 }] };
+  const s = reduceRun(initialRunState, {
+    type: "artifact",
+    runId: "r",
+    artifact: { ref: "metrics:final", kind: "dataframe", title: "M", meta },
+  });
+  expect(s.artifacts["metrics:final"].meta).toEqual(meta);
+});
+
 test("gate-opened/closed add and remove session gates", () => {
   let s = reduceRun(initialRunState, { type: "gate-opened", runId: "r", gate: { id: "g1", kind: "clarify", prompt: "?" } });
   expect(s.openGates).toHaveLength(1);

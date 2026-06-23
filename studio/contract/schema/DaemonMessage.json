@@ -651,6 +651,14 @@
                   "type": "null"
                 }
               ]
+            },
+            "meta": {
+              "anyOf": [
+                {},
+                {
+                  "type": "null"
+                }
+              ]
             }
           }
         }

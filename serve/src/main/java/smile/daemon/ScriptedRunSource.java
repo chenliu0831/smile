@@ -93,7 +93,7 @@ public class ScriptedRunSource implements RunSource {
                 null, "Profiled 21 features over 7,043 rows. Target churn rate 26.5%.", null)));
         emit.accept(new ArtifactMsg(RUN_ID, new Artifact("eda_report", "report", "EDA Report",
                 "# EDA Report\n\n- **Rows:** 7,043  **Features:** 21\n- **Target:** `Churn` (binary), positive rate **26.5%**\n- **Top predictors:** `tenure`, `Contract`, `MonthlyCharges`\n",
-                null, null, null)));
+                null, null, null, null)));
         emit.accept(new StageProgress(RUN_ID, stage("eda", "Exploratory Data Analysis", StageStatus.done, "21 features profiled", List.of("eda_report"))));
         pace();
 
@@ -139,7 +139,7 @@ public class ScriptedRunSource implements RunSource {
                 | candidate_rf | 0.881 | 0.011 | trees=500 | 31 | random forest |
                 | candidate_logreg | 0.842 | 0.010 | C=1.0 | 6 | linear baseline |""";
         emit.accept(new ArtifactMsg(RUN_ID, new Artifact("leaderboard", "leaderboard", "Leaderboard",
-                leaderboardMd, null, null, null)));
+                leaderboardMd, null, null, null, null)));
         emit.accept(new StageProgress(RUN_ID, stage("candidates", "Candidate Research & Evaluation", StageStatus.done, "5 candidates evaluated", List.of("leaderboard"))));
         pace();
 
@@ -158,10 +158,10 @@ public class ScriptedRunSource implements RunSource {
         emit.accept(new StageProgress(RUN_ID, stage("evaluate", "Final Evaluation", StageStatus.running, null, List.of())));
         emit.accept(new ArtifactMsg(RUN_ID, new Artifact("roc", "chart", "ROC Curve", null,
                 new DataVizSpec("line", "ROC (test AUC 0.921)", Map.of("x", "fpr", "y", "tpr"),
-                        new ArrowRef("arrow", "arrow-roc", null, null)), null, null)));
+                        new ArrowRef("arrow", "arrow-roc", null, null)), null, null, null)));
         emit.accept(new ArtifactMsg(RUN_ID, new Artifact("shap", "chart", "Feature Importance (SHAP)", null,
                 new DataVizSpec("bar", "Top features by SHAP", Map.of("x", "importance", "y", "feature"),
-                        new ArrowRef("arrow", "arrow-shap", null, null)), null, null)));
+                        new ArrowRef("arrow", "arrow-shap", null, null)), null, null, null)));
         emit.accept(new StageProgress(RUN_ID, stage("evaluate", "Final Evaluation", StageStatus.done, "test AUC 0.921", List.of("roc", "shap"))));
         pace();
 
@@ -169,7 +169,7 @@ public class ScriptedRunSource implements RunSource {
         emit.accept(new StageProgress(RUN_ID, stage("report", "Report", StageStatus.running, null, List.of())));
         emit.accept(new ArtifactMsg(RUN_ID, new Artifact("report", "report", "AutoML Report",
                 "# AutoML Report\n\n## Final Performance\nTest **AUC 0.921** (ensemble) vs baseline 0.842 — **+9.4%**.\n\n## Final Solution\nHill-climbing ensemble: LightGBM + XGBoost + MLP, seed 42.\n",
-                null, null, null)));
+                null, null, null, null)));
         emit.accept(new StageProgress(RUN_ID, stage("report", "Report", StageStatus.done, "report ready", List.of("report"))));
         emit.accept(new RunFinished(RUN_ID, "completed"));
     }
