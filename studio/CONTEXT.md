@@ -44,6 +44,28 @@ _Avoid_: results table, scoreboard
 The durable files an AutoML Run produces in the working directory: `eda_report.md`, `candidate_scores.md`, `refinement_log.md`, `solution_final.py`, `submission.csv`, `automl_report.md` (8 sections), and `DataViz` charts (ROC, confusion-matrix heatmap, correlation heatmap, SHAP/feature importance). The frontend surfaces these as first-class objects.
 _Avoid_: outputs, results
 
+### Cockpit views
+
+**Cockpit**:
+The explorable evolution of the **AutoML Run** view — the **Run Artifacts** rendered as interactive, drillable surfaces (a metric strip, a sortable board, prediction diagnostics) rather than a flat report. Not a new screen: the existing canvas + rail, enriched.
+_Avoid_: dashboard, report viewer
+
+**Predictions Studio**:
+The signature interactive surface — a compound view over the per-row prediction set (`*_proba`/`*_pred`/`*_actual`) with a live threshold slider driving a confusion matrix and ROC curve, all recomputed client-side. A bespoke component in a **Canvas** branch, gated on the prediction schema (no-ops for regression/unlabeled runs).
+_Avoid_: results page, ROC chart (it is the whole compound view)
+
+**Scorecard**:
+The persistent metric strip above the canvas, sourced from the `metrics` **Artifact** (`final_metrics.json`). Carries the `task_type` that lets the rest of the UI self-configure (killing the hard-coded `"binary"` leaderboard metric).
+_Avoid_: header, stats bar
+
+**Driver Diagnostics**:
+The permutation-importance view — a horizontal bar chart with ±1 std whiskers over the small importance array carried inline in the `diagnostics` **Artifact**. Each bar is an EDA entry point ("Ask Clair about this feature").
+_Avoid_: feature importance chart (this includes the uncertainty + steering affordances)
+
+**meta** (structured artifact payload):
+The single typed JSON field on an **Artifact** that carries structured payloads (`metrics`, `diagnostics`). Distinct from `body` (now markdown / `data:` URIs only) and `data` (an **Arrow Frame** reference for bulk tabular). The one schema-describable channel for structured data.
+_Avoid_: stuffing JSON into `body`, payload, blob
+
 ### Model production paths
 
 **Trained Model** (JVM path):

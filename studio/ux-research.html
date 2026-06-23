@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Smile Studio — Pipeline / Leaderboard / EDA UX Research</title>
+<style>
+  :root{
+    --bg:#0e1116; --bg-elev:#161b22; --bg-elev-2:#1c2330; --border:#2a3340;
+    --text:#e6edf3; --text-dim:#8b98a8; --accent:#4ea8de; --accent-soft:#1f3b4d;
+    --good:#3fb950; --warn:#d29922; --bad:#f85149; --gold:#e3b341;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font);line-height:1.55;font-size:15px}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code{font-family:var(--mono);background:var(--bg-elev);padding:1px 5px;border-radius:4px;font-size:.88em;color:#cdd9e5}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 24px 96px}
+
+  /* Header */
+  header{border-bottom:1px solid var(--border);background:linear-gradient(180deg,#11161d,#0e1116);position:sticky;top:0;z-index:20;backdrop-filter:blur(6px)}
+  header .wrap{padding:18px 24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  .brand{font-weight:700;font-size:17px;letter-spacing:.2px}
+  .brand .dot{color:var(--accent)}
+  .crumb{color:var(--text-dim);font-size:13px}
+  .nav{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .nav a{font-size:12.5px;color:var(--text-dim);border:1px solid var(--border);padding:4px 10px;border-radius:999px}
+  .nav a:hover{color:var(--text);border-color:var(--accent);text-decoration:none;background:var(--accent-soft)}
+
+  /* Hero */
+  .hero{padding:46px 0 26px}
+  .hero h1{font-size:30px;margin:0 0 10px;letter-spacing:-.3px}
+  .hero p{color:var(--text-dim);max-width:760px;font-size:15.5px}
+  .meta-row{display:flex;gap:8px;flex-wrap:wrap;margin-top:18px}
+  .chip{font-size:12px;color:var(--text-dim);border:1px solid var(--border);border-radius:6px;padding:5px 10px;background:var(--bg-elev)}
+  .chip b{color:var(--text)}
+
+  /* The gap callout */
+  .gap{margin:26px 0 8px;border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:10px;background:var(--bg-elev);padding:18px 20px}
+  .gap h2{margin:0 0 8px;font-size:15px;color:var(--accent);text-transform:uppercase;letter-spacing:.6px}
+  .gap p{margin:6px 0 0;color:var(--text)}
+  .gap .files{margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--text-dim);display:grid;grid-template-columns:1fr 1fr;gap:4px 22px}
+  .gap .files span::before{content:"›  ";color:var(--accent)}
+
+  h2.section{font-size:13px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);margin:54px 0 6px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  .section-sub{color:var(--text-dim);font-size:13.5px;margin:0 0 18px}
+
+  /* Cards */
+  .card{border:1px solid var(--border);border-radius:14px;background:var(--bg-elev);margin:20px 0;overflow:hidden;scroll-margin-top:84px}
+  .card-head{padding:20px 22px 16px;border-bottom:1px solid var(--border);background:linear-gradient(180deg,#181e27,#161b22)}
+  .rankline{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .rankno{font-family:var(--mono);font-size:13px;color:var(--bg);background:var(--accent);width:26px;height:26px;border-radius:7px;display:grid;place-items:center;font-weight:700;flex:none}
+  .card h3{margin:0;font-size:19px;letter-spacing:-.2px}
+  .tags{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}
+  .tag{font-size:11px;font-family:var(--mono);padding:3px 9px;border-radius:999px;border:1px solid var(--border);color:var(--text-dim);white-space:nowrap}
+  .tag.impact-high{color:var(--good);border-color:#1d5129;background:#0f2516}
+  .tag.effort-S{color:var(--good)}
+  .tag.effort-M{color:var(--warn)}
+  .tag.effort-L{color:var(--bad)}
+  .tag.cat{color:var(--accent);border-color:var(--accent-soft);background:var(--accent-soft)}
+  .tag.score{color:var(--gold);border-color:#5a4a18;background:#211b0c}
+  .pitch{color:var(--text-dim);font-size:13.5px;margin:10px 0 0}
+  .bundle{font-size:12px;color:var(--text-dim);margin-top:10px}
+  .bundle b{color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;font-size:10.5px}
+  .bundle .b-item{display:inline-block;color:#cdd9e5;background:var(--bg-elev-2);border:1px solid var(--border);border-radius:5px;padding:2px 8px;margin:3px 4px 0 0;font-size:12px}
+
+  .card-body{padding:20px 22px;display:grid;grid-template-columns:1fr 1fr;gap:22px}
+  .block h4{margin:0 0 7px;font-size:11px;letter-spacing:.7px;text-transform:uppercase;color:var(--accent)}
+  .block p{margin:0;font-size:13.5px;color:#cdd9e5}
+  .block.full{grid-column:1 / -1}
+  .sketch{grid-column:1 / -1;background:#0b0e13;border:1px solid var(--border);border-radius:9px;padding:14px 16px;font-family:var(--mono);font-size:12px;color:#aebbcc;white-space:pre;overflow-x:auto;line-height:1.45}
+  .data{font-family:var(--mono);font-size:12px;color:#9db4c8}
+  .data b{color:var(--gold);font-weight:400}
+
+  .caveat{grid-column:1 / -1;border:1px solid #5a4a18;border-left:3px solid var(--warn);background:#1a1710;border-radius:9px;padding:13px 16px;font-size:13px;color:#e8d9b0}
+  .caveat b{color:var(--warn);text-transform:uppercase;font-size:10.5px;letter-spacing:.6px;display:block;margin-bottom:4px}
+
+  .wiring{grid-column:1 / -1;font-size:12.5px;color:var(--text-dim);border-top:1px dashed var(--border);padding-top:12px}
+  .wiring b{color:var(--text);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+
+  /* Roadmap */
+  .road{border:1px solid var(--border);border-radius:14px;background:var(--bg-elev);padding:8px 0;margin-top:8px}
+  .road .step{display:flex;gap:16px;padding:16px 22px;border-bottom:1px solid var(--border);align-items:flex-start}
+  .road .step:last-child{border-bottom:none}
+  .road .ph{font-family:var(--mono);font-size:12px;color:var(--accent);background:var(--accent-soft);border-radius:6px;padding:4px 9px;flex:none;margin-top:2px}
+  .road .step h4{margin:0 0 3px;font-size:14.5px}
+  .road .step p{margin:0;font-size:13px;color:var(--text-dim)}
+  .road .wave{font-size:11px;font-family:var(--mono);color:var(--text-dim);margin-left:auto;flex:none;border:1px solid var(--border);border-radius:999px;padding:3px 10px;align-self:center}
+
+  /* Also considered */
+  .also{margin-top:16px;border:1px solid var(--border);border-radius:12px;background:var(--bg-elev);overflow:hidden}
+  details summary{cursor:pointer;padding:14px 20px;font-size:13.5px;color:var(--text);user-select:none}
+  details summary:hover{background:var(--bg-elev-2)}
+  details[open] summary{border-bottom:1px solid var(--border)}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th,td{text-align:left;padding:8px 20px;border-bottom:1px solid var(--border)}
+  th{color:var(--text-dim);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+  td.s{font-family:var(--mono);color:var(--gold)}
+  tr:last-child td{border-bottom:none}
+  .mini{color:var(--good)} .mini.M{color:var(--warn)} .mini.L{color:var(--bad)}
+
+  footer{margin-top:60px;padding-top:22px;border-top:1px solid var(--border);color:var(--text-dim);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <span class="brand">Smile Studio <span class="dot">·</span> UX Research</span>
+    <span class="crumb">Pipeline · Leaderboard · EDA</span>
+    <nav class="nav">
+      <a href="#gap">The Gap</a>
+      <a href="#top5">Top 5</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#also">Full Catalog</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <section class="hero">
+    <h1>Turning a flat report viewer into an explorable AutoML cockpit</h1>
+    <p>Five consolidated feature &amp; UX improvements to enrich the pipeline, leaderboard, and EDA
+    experience — give the user interactive access to steer and interrogate the run. Grounded in a
+    real completed run (<code>smile_example</code>, Titanic), and stress-tested by an adversarial
+    feasibility pass that caught hallucinated numbers, a wrong feature-join, and architecture
+    violations.</p>
+    <div class="meta-row">
+      <span class="chip"><b>29</b> ideas generated</span>
+      <span class="chip"><b>27</b> passed adversarial verification</span>
+      <span class="chip">consolidated to <b>5</b> initiatives</span>
+      <span class="chip">covers <b>5</b> dimensions</span>
+      <span class="chip">effort: <b>mostly S/M</b></span>
+    </div>
+  </section>
+
+  <section class="gap" id="gap">
+    <h2>The core gap — it's a transport problem, not a rendering one</h2>
+    <p>Clair's run writes a <b>goldmine of structured data</b> — per-model AUCs and tuned
+    hyperparameters, calibration and permutation importance with error bars, and 179 rows of per-row
+    prediction probabilities. But <code>RunArtifactWatcher.java</code> is deliberately
+    <b>file-existence-only</b> and surfaces just flat markdown + base64 PNGs. So the UI shows a static
+    timeline, a read-only 5-row leaderboard hard-coded to <code>"binary"</code>, and a dead path string
+    where the richest predictive artifact should be.</p>
+    <p style="margin-top:12px">The unlock: three of those files sit in <code>output/</code> as the
+    skill's <b>intentional public outputs</b>, so they can be surfaced without touching the private
+    <code>state.json</code> the ADR-0005/0006 boundary protects. Surface the public JSON/CSV first,
+    then build interactive consumers on top, and reuse the agentic <code>user-message</code> channel
+    that already exists rather than inventing new commands.</p>
+    <div class="files">
+      <span>final_metrics.json — OOF/test AUC, per-model, ensemble vs stacking</span>
+      <span>postprocess_results.json — calibration + perm-importance ±std</span>
+      <span>best_params.json — tuned hyperparameters per model</span>
+      <span>final/submission.csv — 179× proba / pred / actual</span>
+      <span>summary.md — the merged 10-model ranking</span>
+      <span>automl_report.md — 11 steps, refinement Δ, next steps</span>
+    </div>
+  </section>
+
+  <!-- ============ TOP 5 ============ -->
+  <h2 class="section" id="top5">The Top 5 — consolidated initiatives</h2>
+  <p class="section-sub">Each bundles a surfacing <b>enabler</b> with its highest-value
+  <b>consumer(s)</b>. Ordered by leverage. Honesty notes come straight from the adversarial verifiers.</p>
+
+  <!-- 1 -->
+  <article class="card" id="i1">
+    <div class="card-head">
+      <div class="rankline">
+        <span class="rankno">1</span>
+        <h3>Predictions Studio — ROC, confusion matrix &amp; a live threshold slider</h3>
+        <div class="tags">
+          <span class="tag cat">diagnostics</span>
+          <span class="tag score">★ flagship · 9.5</span>
+          <span class="tag effort-M">effort M</span>
+          <span class="tag impact-high">impact high</span>
+        </div>
+      </div>
+      <p class="pitch">The signature interactive view. <code>final/submission.csv</code> reaches the UI
+      today as a dead <code>📄 path</code> string — yet every per-row probability + label is a
+      ROC / confusion / threshold / error-inspection goldmine, all computable client-side once the
+      rows cross the wire. This is the single highest-leverage enabler in the whole set.</p>
+      <div class="bundle"><b>Bundles</b><br>
+        <span class="b-item">Predictions dataframe (enabler)</span>
+        <span class="b-item">Threshold Studio</span>
+        <span class="b-item">Probability-separation histogram</span>
+        <span class="b-item">Misclassified-passenger inspector</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="block">
+        <h4>What you build</h4>
+        <p>A two-pane panel: a 2×2 confusion matrix beside a ROC curve, both recomputed in the browser
+        as the user drags one threshold slider. Live readouts of accuracy / precision / recall / F1.
+        Click a confusion cell → list those rows. Click a misclassified passenger → expand its features.</p>
+      </div>
+      <div class="block">
+        <h4>Data that powers it</h4>
+        <p class="data"><code>submission.csv</code>: <b>Survived_proba</b>, <b>Survived_pred</b>,
+        <b>Survived_actual</b> (179 rows). Anchored to <code>final_metrics.json</code> test_auc / f1 and
+        <code>state.json</code> test_accuracy so the client-computed curve is validated against the
+        daemon's own numbers.</p>
+      </div>
+      <div class="sketch"> Threshold  [======●========]  0.50   (model's real operating point)
+   acc .821   prec .79   rec .73   F1 .76        [Maximize F1 — what-if]
+ ┌ Confusion @ 0.50 ──────┐   ┌ ROC ───────────────────┐
+ │        pred0  pred1    │   │ TPR┤      ___           │
+ │  act0 [ 97 ][ 13 ]     │   │    │   _/   ● you=0.50  │
+ │  act1 [ 19 ][ 50 ]     │   │    │ _/                 │
+ │  green diag, red off   │   │    └──── FPR   AUC 0.860│
+ └────────────────────────┘   └────────────────────────┘</div>
+      <div class="caveat">
+        <b>Honesty note (from the verifier)</b>
+        Threshold tuning on the hold-out is in-sample — frame "Maximize F1" as a <b>what-if, not
+        validated</b>, and open the slider at the model's real ~0.50 operating point (not the 0.42 an
+        early draft hallucinated). Label metrics "recomputed from hold-out" so a ±0.001 drift from
+        <code>summary.md</code> reads as rounding, not a bug. Calibration here is a near-no-op
+        (AUC raw==cal to 7 digits) — don't make it a hero panel.</div>
+      <div class="wiring"><b>Wiring</b> &nbsp; Watcher: <code>CREATE OR REPLACE VIEW submission AS
+      SELECT * FROM read_csv_auto('final/submission.csv')</code> on the shared DuckDB session, emit a
+      <code>dataframe</code> artifact with <code>data=ArrowRef("submission")</code>. The existing
+      <code>/data/{ref}</code> column-JSON path (already consumed by <code>Chart.tsx</code>) carries
+      the rows — no Arrow-IPC decode, no new endpoint. New <code>PredictionsStudio.tsx</code> branch in
+      <code>Canvas.tsx</code>; all metric math client-side. Gate on the <code>*_proba/*_actual</code>
+      schema so it no-ops for regression/unlabeled runs.</div>
+    </div>
+  </article>
+
+  <!-- 2 -->
+  <article class="card" id="i2">
+    <div class="card-head">
+      <div class="rankline">
+        <span class="rankno">2</span>
+        <h3>Live Run Scorecard — a persistent metric strip that self-configures the UI</h3>
+        <div class="tags">
+          <span class="tag cat">pipeline · surfacing</span>
+          <span class="tag score">★ flagship · 9.2</span>
+          <span class="tag effort-M">effort M</span>
+          <span class="tag impact-high">impact high</span>
+        </div>
+      </div>
+      <p class="pitch">Every numeric score the agent computes dies in JSON. A persistent scorecard strip
+      above the canvas turns <code>final_metrics.json</code> into a live header — and the
+      <code>task_type</code> it carries finally kills the hard-coded <code>"binary"</code> in the
+      leaderboard, letting the whole UI self-configure for regression / multiclass runs.</p>
+      <div class="bundle"><b>Bundles</b><br>
+        <span class="b-item">Metrics artifact (enabler)</span>
+        <span class="b-item">Run context header</span>
+        <span class="b-item">task_type → defaultMetric()</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="block">
+        <h4>What you build</h4>
+        <p>A sticky strip: problem type · primary metric · CV · rows, then the headline scores that fill
+        in as the run completes. Hover a metric → its source field + which step produced it. The
+        <code>task_type</code> feeds <code>defaultMetric()</code> so metric labels are correct for any
+        task, not just binary.</p>
+      </div>
+      <div class="block">
+        <h4>Data that powers it</h4>
+        <p class="data"><code>final_metrics.json</code>: <b>oof_auc</b> 0.895, <b>test_auc</b> 0.860,
+        <b>test_acc</b> 0.827, <b>test_f1</b> 0.763, <b>method</b> weighted_average. task_type +
+        primary_metric parsed from <code>automl_report.md</code> problem-setup.</p>
+      </div>
+      <div class="sketch"> ┌ binary_classification · AUC-ROC · 5-fold · 891 rows ──────────── ✓ complete ┐
+ │  OOF 0.895    TEST 0.860    ACC 0.827    F1 0.763    Brier 0.137            │
+ │  ensemble: weighted_avg (xgb·lgbm·rf)   ·   vs stacking 0.892              │
+ └────────────────────────────────────────────────────────────────────────────┘</div>
+      <div class="caveat">
+        <b>Honesty note</b>
+        Source the scorecard from <b>public</b> <code>final_metrics.json</code>, <b>not</b> the private
+        <code>state.json</code> — reaching into the skill's checkpoint reverses a documented
+        ADR-0005/0006 decision and couples the wire contract to an internal schema that can drift.
+        Carry the parsed JSON in the existing nullable <code>body</code> string + one new
+        <code>"metrics"</code> ArtifactKind literal to avoid churning the positional Java
+        <code>Artifact</code> record.</div>
+      <div class="wiring"><b>Wiring</b> &nbsp; Contract: add <code>"metrics"</code> to
+      <code>ArtifactKind</code> (TypeBox), regenerate. Watcher: read <code>final_metrics.json</code> on
+      its existing tick, emit a <code>metrics</code> artifact (JSON in <code>body</code>). New
+      <code>Scorecard.tsx</code>; <code>defaultMetric()</code> consumes <code>task_type</code>.</div>
+    </div>
+  </article>
+
+  <!-- 3 -->
+  <article class="card" id="i3">
+    <div class="card-head">
+      <div class="rankline">
+        <span class="rankno">3</span>
+        <h3>Interactive Leaderboard — sortable, score bars, per-model drill-down</h3>
+        <div class="tags">
+          <span class="tag cat">leaderboard</span>
+          <span class="tag score">8.8</span>
+          <span class="tag effort-M">effort M</span>
+          <span class="tag impact-high">impact high</span>
+        </div>
+      </div>
+      <p class="pitch">Today <code>Leaderboard.tsx</code> parses only the 5 default candidates, has no
+      sort, no bars, and never shows the 3 tuned models or 2 ensembles. The cheapest unlock: repoint it
+      at <code>summary.md</code> — which already <b>is</b> the merged 10-row ranking — then make it
+      interactive and drillable.</p>
+      <div class="bundle"><b>Bundles</b><br>
+        <span class="b-item">Unified sortable board (summary.md)</span>
+        <span class="b-item">Per-model hyperparameter card</span>
+        <span class="b-item">Ensemble-vs-stacking verdict</span>
+        <span class="b-item">Runtime-vs-accuracy scatter</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="block">
+        <h4>What you build</h4>
+        <p>Sortable columns, horizontal score bars (gold = ensemble, blue = tuned, grey = default), and
+        conditional ±std whiskers. Expand a row → tuned hyperparameters from <code>best_params.json</code>
+        with a "copy as Python dict" and a default-vs-tuned delta. A grouped block shows the
+        weighted-avg ensemble beat every base learner <i>and</i> stacking.</p>
+      </div>
+      <div class="block">
+        <h4>Data that powers it</h4>
+        <p class="data"><code>summary.md</code> 10-row table (OOF AUC, std, notes);
+        <code>best_params.json</code> per-model <b>params</b> + score; <code>final_metrics.json</code>
+        ensemble <b>weighted_avg 0.8946</b> vs <b>stacking 0.8924</b>.</p>
+      </div>
+      <div class="sketch"> #  Model              OOF AUC                    Std     Type
+ 🥇 Ensemble (avg)    |##########|--|  0.8946     —       ENSEMBLE
+ 2  Tuned XGBoost     |#########|---|  0.8955    ±.015    tuned   ▸ expand
+ 8  Default LightGBM  |#####|------|   0.8824    ±.015    default
+        ▸ Tuned XGBoost  ·  n_estimators 406  max_depth 5  lr .094  …  [copy dict]</div>
+      <div class="caveat">
+        <b>Honesty note</b>
+        Tuned/ensemble rows have <code>std = "—"</code> — render the whisker only where std is finite.
+        The files disagree on per-model AUC (tuning-CV 0.8955 vs OOF 0.8913 vs default 0.8918): <b>pin
+        every number to one source and compute lift client-side</b> so the arithmetic always reconciles.
+        Emit <code>best_params.json</code> as its own companion artifact keyed by the agent's
+        <code>xgb/lgbm/rf</code> names to sidestep the <code>xgb≠xgboost</code> join bug; badge
+        logreg/mlp "tuned only".</div>
+      <div class="wiring"><b>Wiring</b> &nbsp; v1 is <b>zero contract/Java change</b>: surface
+      <code>summary.md</code> as <code>kind:"leaderboard"</code>, teach the parser its column layout,
+      add a <code>useState</code> sort key + bars in <code>Leaderboard.tsx</code>. Drill-down adds one
+      watcher read of <code>best_params.json</code> as a companion artifact.</div>
+    </div>
+  </article>
+
+  <!-- 4 -->
+  <article class="card" id="i4">
+    <div class="card-head">
+      <div class="rankline">
+        <span class="rankno">4</span>
+        <h3>Driver Diagnostics — permutation importance with uncertainty whiskers</h3>
+        <div class="tags">
+          <span class="tag cat">eda · diagnostics</span>
+          <span class="tag score">9.0 · 8.6</span>
+          <span class="tag effort-S">effort S</span>
+          <span class="tag impact-high">impact high</span>
+        </div>
+      </div>
+      <p class="pitch">The real diagnostic payoff on this dataset. <code>postprocess_results.json</code>
+      carries each driver's importance <b>mean AND std</b> — the whole point of permutation importance
+      (is the ranking stable?) — but it renders today as a flat numbered list with no magnitudes. A bar
+      chart with error whiskers makes stability legible at a glance, and each bar becomes an EDA entry
+      point.</p>
+      <div class="bundle"><b>Bundles</b><br>
+        <span class="b-item">Diagnostics artifact (enabler)</span>
+        <span class="b-item">Importance bars + whiskers</span>
+        <span class="b-item">"Ask Clair about this feature"</span>
+        <span class="b-item">"Slice survival by feature"</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="block">
+        <h4>What you build</h4>
+        <p>A horizontal bar chart (mean ΔAUC, sorted), each bar with a ±1 std whisker, in plain SVG —
+        no ECharts, no Arrow. Hover → exact mean±std + plain-English line. Click a feature → templated
+        "Ask Clair about Title_Mr" turn, or "Slice survival by it" runs a grouped SELECT over the
+        feature table inline.</p>
+      </div>
+      <div class="block">
+        <h4>Data that powers it</h4>
+        <p class="data"><code>postprocess_results.json</code> top5_features:
+        <b>Title_Mr 0.066±0.018</b>, Sex_female 0.047±0.016, Age 0.038±0.014,
+        <b>Title_Mrs 0.025±0.005</b> (stable), <b>FarePerPerson 0.018±0.010</b> (noisy).</p>
+      </div>
+      <div class="sketch"> Permutation importance (mean ΔAUC ± std)
+   Title_Mr      |██████████|----   0.066 ±.018
+   Sex_female    |███████|---       0.047 ±.016
+   Age           |██████|--         0.038 ±.014
+   Title_Mrs     |████|             0.025 ±.005   ← rock-solid
+   FarePerPerson |███|-----         0.018 ±.010   ← noisy
+                 0         0.05      0.08      [Ask Clair ▸] [Slice ▸]</div>
+      <div class="caveat">
+        <b>Honesty note</b>
+        Whiskers aren't in any existing chart path — render them in plain SVG, don't try to reuse the
+        <code>DataVizSpec</code> bar (no whisker channel, by-reference data). Carry the 5-row array
+        inline in the new <code>diagnostics</code> artifact body (tiny — no DuckDB round-trip). Defer
+        the "remove feature &amp; re-run" button until agent-side feature exclusion is confirmed.</div>
+      <div class="wiring"><b>Wiring</b> &nbsp; Contract: add <code>"diagnostics"</code> ArtifactKind
+      literal; carry parsed JSON in <code>body</code> (no new Java record field). Watcher: JSON-parse
+      <code>postprocess_results.json</code> on appearance. New <code>PermImportanceChart.tsx</code>;
+      "Ask Clair"/"Slice" reuse the existing <code>sendMessage</code> + <code>runSql</code> seams.</div>
+    </div>
+  </article>
+
+  <!-- 5 -->
+  <article class="card" id="i5">
+    <div class="card-head">
+      <div class="rankline">
+        <span class="rankno">5</span>
+        <h3>Close the Loop — passive readout → active steering</h3>
+        <div class="tags">
+          <span class="tag cat">interactivity · eda</span>
+          <span class="tag score">8.3 · 8.0</span>
+          <span class="tag effort-S">effort S</span>
+          <span class="tag impact-high">impact high</span>
+        </div>
+      </div>
+      <p class="pitch">The agentic channel (<code>user-message</code>) already exists, but every view is
+      a dead end. Two cheap, high-leverage steering wins reuse that exact path — making the EDA and the
+      report <b>actionable</b> instead of read-only.</p>
+      <div class="bundle"><b>Bundles</b><br>
+        <span class="b-item">Ask Clair about this column</span>
+        <span class="b-item">One-click Next Steps</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="block">
+        <h4>Ask Clair about this column</h4>
+        <p>An affordance on every SqlConsole schema-rail column, pre-seeding a prompt with the column's
+        name, dtype, and — when present — its driver rank from <code>postprocess_results.json</code>.
+        "How does Age relate to survival?" → Clair answers in chat and proposes a confirming SQL into the
+        editor. Keep insert-then-Run (don't fight the agent for the single DuckDB connection).</p>
+      </div>
+      <div class="block">
+        <h4>One-click Next Steps</h4>
+        <p>Parse the report's own <i>Recommended Next Steps</i> into context-rich buttons — "Add CatBoost
+        as a 4th learner", "Switch Platt → isotonic", "Tune threshold for F1" — each sending a templated
+        <code>sendMessage</code> carrying the current solution + baseline AUC (0.8946) as a new turn.</p>
+      </div>
+      <div class="sketch"> [histogram of Age]          NEXT STEPS  (from Clair's report)
+   [ ? Ask Clair about Age ]    [+ Add CatBoost as 4th learner]
+   → "Age, driver #3,           [Switch Platt → isotonic calibration]
+      perm-imp 0.038 …"         [K-fold target-mean encode Title]
+   Clair: "children survived    [Tune threshold for F1]
+   at ~2× …" + SQL into editor  ─ each runs as a new steering turn</div>
+      <div class="caveat">
+        <b>Honesty note</b>
+        Scope "Ask Clair" to the schema rail that exists — flat-PNG charts can't carry per-bar click
+        targets, so "ask about this histogram bar" is a later dependency, not this ticket. Ship Next
+        Steps as <b>steering shortcuts</b>, not an auto-landing-Δ-row promise: the one load-bearing
+        backend follow-up is giving the report path the same <b>mtime re-emit</b> key the image path
+        already has, so a regenerated report refreshes the canvas.</div>
+      <div class="wiring"><b>Wiring</b> &nbsp; Almost entirely frontend — reuses
+      <code>askClair</code> / <code>sendMessage</code> / <code>awaitingAgentSql</code>. Driver context
+      needs <code>postprocess_results.json</code> surfaced (shared with #4). One backend line: mtime
+      re-emit for the report artifact in <code>RunArtifactWatcher</code>.</div>
+    </div>
+  </article>
+
+  <!-- ============ ROADMAP ============ -->
+  <h2 class="section" id="roadmap">Build sequence</h2>
+  <p class="section-sub">The surfacing enablers unblock nearly everything — land them first, sourced
+  from the skill's <b>public</b> <code>output/</code> files so ADR-0005/0006 stays intact. Quick wins
+  ride alongside on already-surfaced data or the existing message channel.</p>
+  <div class="road">
+    <div class="step">
+      <span class="ph">Wave 1</span>
+      <div><h4>Surfacing enablers</h4>
+      <p>Predictions dataframe (submission.csv → DuckDB view) · Metrics artifact (final_metrics.json) ·
+      Diagnostics artifact (postprocess_results.json). One design decision: source from public files,
+      never private <code>state.json</code>.</p></div>
+      <span class="wave">unblocks 1, 2, 4</span>
+    </div>
+    <div class="step">
+      <span class="ph">Wave 2</span>
+      <div><h4>Zero-backend quick wins (parallel)</h4>
+      <p>Repoint leaderboard at <code>summary.md</code> + sort + bars · Ask-Clair-about-column on the
+      schema rail · Next-Steps shortcuts · per-model hyperparameter cards from a best_params.json
+      companion.</p></div>
+      <span class="wave">3, 5 · mostly S</span>
+    </div>
+    <div class="step">
+      <span class="ph">Wave 3</span>
+      <div><h4>Flagship consumers</h4>
+      <p>Predictions Studio (the signature interactive view) → probability-separation histogram →
+      ensemble verdict → misclassified-passenger inspector → permutation-importance whiskers.</p></div>
+      <span class="wave">1, 4</span>
+    </div>
+    <div class="step">
+      <span class="ph">Later</span>
+      <div><h4>Deferred — need skill-side changes</h4>
+      <p>Live pipeline cockpit, refinement curve, skipped-step cards, and the FE-provenance graph all
+      need the skill to emit structured sidecars (per-cycle jsonl, lineage.json). Out of scope until
+      then; don't reverse-engineer the private checkpoint.</p></div>
+      <span class="wave">parked</span>
+    </div>
+  </div>
+
+  <!-- ============ FULL CATALOG ============ -->
+  <h2 class="section" id="also">Full catalog — the other 19 ranked ideas</h2>
+  <p class="section-sub">All feasibility-verified, folded into the five above or deferred. Score is the
+  synthesis's 1–10 leverage rank.</p>
+  <div class="also">
+    <details open>
+      <summary>Show all ranked ideas</summary>
+      <table>
+        <thead><tr><th>Idea</th><th>Category</th><th>Score</th><th>Effort</th><th>Folds into</th></tr></thead>
+        <tbody>
+          <tr><td>Predictions artifact from submission.csv</td><td>surfacing</td><td class="s">9.5</td><td class="mini M">M</td><td>#1</td></tr>
+          <tr><td>Structured "metrics" scorecard (final_metrics.json)</td><td>surfacing</td><td class="s">9.2</td><td class="mini M">M</td><td>#2</td></tr>
+          <tr><td>Diagnostics artifact (postprocess_results.json)</td><td>surfacing</td><td class="s">9.0</td><td class="mini M">M</td><td>#4</td></tr>
+          <tr><td>Unified sortable leaderboard (point at summary.md)</td><td>leaderboard</td><td class="s">8.8</td><td class="mini M">M</td><td>#3</td></tr>
+          <tr><td>Permutation-importance bars with whiskers</td><td>diagnostics</td><td class="s">8.6</td><td class="mini">S</td><td>#4</td></tr>
+          <tr><td>Threshold Studio (ROC / confusion / F1 slider)</td><td>diagnostics</td><td class="s">8.5</td><td class="mini M">M</td><td>#1</td></tr>
+          <tr><td>"Ask Clair about this column"</td><td>interactivity</td><td class="s">8.3</td><td class="mini">S</td><td>#5</td></tr>
+          <tr><td>One-click Next Steps (from the report)</td><td>interactivity</td><td class="s">8.0</td><td class="mini">S</td><td>#5</td></tr>
+          <tr><td>Per-model drill-down: tuned hyperparameters</td><td>leaderboard</td><td class="s">7.9</td><td class="mini">S</td><td>#3</td></tr>
+          <tr><td>Ensemble-vs-base &amp; stacking-vs-avg verdict</td><td>leaderboard</td><td class="s">7.7</td><td class="mini M">M</td><td>#3</td></tr>
+          <tr><td>Probability-separation histogram by class</td><td>diagnostics</td><td class="s">7.5</td><td class="mini M">M</td><td>#1</td></tr>
+          <tr><td>Misclassified-passenger inspector</td><td>diagnostics</td><td class="s">7.3</td><td class="mini M">M</td><td>#1</td></tr>
+          <tr><td>Drill-into-stage inspector</td><td>pipeline</td><td class="s">7.0</td><td class="mini L">L</td><td>deferred</td></tr>
+          <tr><td>State-machine timeline (context, not cursor)</td><td>pipeline</td><td class="s">6.8</td><td class="mini M">M</td><td>deferred</td></tr>
+          <tr><td>Compare-two-models diff + promote</td><td>leaderboard</td><td class="s">6.5</td><td class="mini M">M</td><td>#3</td></tr>
+          <tr><td>Skipped-step cards with reasons</td><td>pipeline</td><td class="s">6.3</td><td class="mini M">M</td><td>deferred</td></tr>
+          <tr><td>Feature what-if + interrogation panel</td><td>interactivity</td><td class="s">6.2</td><td class="mini M">M</td><td>#4</td></tr>
+          <tr><td>Runtime-vs-accuracy Pareto scatter</td><td>leaderboard</td><td class="s">5.8</td><td class="mini M">M</td><td>#3</td></tr>
+          <tr><td>Reliability / calibration plot</td><td>diagnostics</td><td class="s">5.5</td><td class="mini M">M</td><td>#1</td></tr>
+          <tr><td>Live refinement curve (post-hoc)</td><td>pipeline</td><td class="s">5.3</td><td class="mini M">M</td><td>deferred</td></tr>
+          <tr><td>Pipeline DAG / branch view</td><td>pipeline</td><td class="s">4.8</td><td class="mini M">M</td><td>deferred</td></tr>
+          <tr><td>Missingness &amp; imputation map</td><td>eda</td><td class="s">4.5</td><td class="mini M">M</td><td>deferred</td></tr>
+          <tr><td>Feature-engineering provenance graph</td><td>eda</td><td class="s">4.0</td><td class="mini L">L</td><td>deferred</td></tr>
+          <tr><td>Live run cockpit (mid-flight steering)</td><td>interactivity</td><td class="s">3.8</td><td class="mini L">L</td><td>deferred</td></tr>
+        </tbody>
+      </table>
+    </details>
+  </div>
+
+  <footer>
+    Generated from a deep-research pass over <code>smile_example</code> (Titanic) and the current Studio
+    UX source. 29 ideas across 6 dimensions, each adversarially verified for data-existence, wiring
+    feasibility, and honest effort, then synthesized and consolidated to the top 5.
+    Numbers cited are from the real run artifacts.
+  </footer>
+
+</div>
+</body>
+</html>
