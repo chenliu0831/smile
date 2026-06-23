@@ -7,12 +7,15 @@ import type { Artifact } from "../daemon/protocol";
 import { Markdown } from "./Markdown";
 import { Leaderboard } from "./Leaderboard";
 import { Chart } from "./Chart";
+import { PredictionsStudio, isPredictionsArtifact } from "./PredictionsStudio";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 function ArtifactView({ artifact }: { artifact: Artifact }) {
   if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} />;
   if (artifact.kind === "report" && artifact.body) return <Markdown source={artifact.body} />;
   if (artifact.kind === "chart" && artifact.viz) return <Chart spec={artifact.viz} />;
+  // A prediction-set dataframe (final/submission.csv → DuckDB) renders as Predictions Studio.
+  if (isPredictionsArtifact(artifact)) return <PredictionsStudio artifact={artifact} />;
   // Image artifacts (summarize/EDA PNG charts) carry a base64 data: URI in body.
   if (artifact.kind === "image" && artifact.body) {
     return <img className="artifact-image" src={artifact.body} alt={artifact.title} />;

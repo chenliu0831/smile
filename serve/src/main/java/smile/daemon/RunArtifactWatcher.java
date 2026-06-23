@@ -27,6 +27,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
+import ioa.llm.tool.SharedSql;
 import smile.daemon.DaemonMessage.*;
 
 /**
@@ -239,6 +240,14 @@ public final class RunArtifactWatcher {
     }
 
     private Artifact buildArtifact(StageSpec spec, Path file) {
+        // The prediction set (final/submission.csv) is materialized ONCE into the shared
+        // DuckDB session and surfaced as a `dataframe` artifact so Predictions Studio can
+        // fetch its rows over /data/{ref} and compute ROC/confusion client-side (ADR-0011).
+        if ("submission".equals(spec.stageId())) {
+            Artifact df = buildPredictionsDataframe(file);
+            if (df != null) return df;
+            // Bridge unavailable / materialization failed → fall through to the path-only file.
+        }
         String body = null;
         // Inline small text artifacts (reports/leaderboards) so the canvas renders them.
         if (!"file".equals(spec.artifactKind())) {
@@ -246,6 +255,33 @@ public final class RunArtifactWatcher {
         }
         return new Artifact(spec.stageId(), spec.artifactKind(), spec.artifactTitle(),
             body, null, null, file.toString(), null);
+    }
+
+    /** The session table name the prediction set is materialized into. */
+    private static final String SUBMISSION_TABLE = "submission";
+
+    /**
+     * Materialize {@code final/submission.csv} as a DuckDB TABLE in the shared session and
+     * return a {@code dataframe} artifact referencing it. A TABLE (not a VIEW) so it is
+     * listed by {@code duckdb_tables()} — which {@code DataResource}/{@code SessionTables}
+     * resolve {@code /data/{ref}} against — and so the CSV is read exactly once (materialize-
+     * once, per ADR-0011) rather than re-scanned on every fetch.
+     *
+     * <p>Returns null (caller falls back to a path-only {@code file} artifact) if the shared
+     * SQL bridge is unavailable or the CREATE fails — the canvas still surfaces the file.
+     */
+    private Artifact buildPredictionsDataframe(Path file) {
+        try {
+            // read_csv_auto over the absolute path; single-quotes in the path are escaped.
+            String path = file.toAbsolutePath().toString().replace("'", "''");
+            SharedSql.execute("CREATE OR REPLACE TABLE \"" + SUBMISSION_TABLE
+                + "\" AS SELECT * FROM read_csv_auto('" + path + "')");
+            var data = new ArrowRef("arrow", SUBMISSION_TABLE, null, null);
+            return new Artifact("submission", "dataframe", "Predictions",
+                null, null, data, file.toString(), null);
+        } catch (Throwable t) {
+            return null;
+        }
     }
 
     /** Read a text file, bounded to keep big artifacts from flooding the socket. */

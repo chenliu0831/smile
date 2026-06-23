@@ -12,12 +12,16 @@ Honesty framing is part of the slice: the slider opens at the model's real opera
 
 ## Acceptance criteria
 
-- [ ] The watcher emits a `dataframe` **Artifact** for `final/submission.csv`, backed by a DuckDB view, served over `/data/{ref}` as an **Arrow Frame** / column projection.
-- [ ] A pure `lib/` module computes ROC points, confusion-at-threshold, and accuracy/precision/recall/F1 from prediction rows; it tolerates malformed/edge input without throwing.
-- [ ] Dragging the threshold slider recomputes the confusion matrix, ROC operating point, and the four metric readouts entirely client-side (no network call per drag).
-- [ ] The slider's initial position is the model's real ~0.50 operating point; "Maximize F1" is shown as a labeled what-if; metrics are labeled "recomputed from hold-out".
-- [ ] The view does not render for a run lacking the `*_proba`/`*_actual` schema.
-- [ ] A replay-fixture UAT drives the whole frontend from a captured transcript carrying the predictions artifact and asserts the panel renders and the slider recomputes the matrix.
+- [x] The watcher emits a `dataframe` **Artifact** for `final/submission.csv`, backed by a DuckDB table, served over `/data/{ref}`. (Materialized via `CREATE OR REPLACE TABLE submission AS read_csv_auto(...)` — a TABLE not a VIEW, see note — with graceful fallback to the path-only `file` artifact when the SQL bridge is unavailable.)
+- [x] A pure `lib/` module (`lib/predictions.ts`) computes ROC points, confusion-at-threshold, and accuracy/precision/recall/F1 from prediction rows; tolerates malformed/edge input without throwing. (9 unit tests.)
+- [x] Dragging the threshold slider recomputes the confusion matrix, ROC operating point, and the four metric readouts entirely client-side (UAT asserts exactly one `/data/{ref}` fetch across the drag).
+- [x] The slider opens at the model's real ~0.50 operating point; "Maximize F1" is a labeled what-if; metrics are labeled "recomputed from hold-out".
+- [x] The view does not render for a run lacking the `*_proba`/`*_actual` schema (`detectPredictionSchema` returns null → no-op message).
+- [x] A replay-fixture UAT (`uat-predictions-studio.test.tsx`) drives the frontend from a transcript carrying the predictions artifact and asserts the panel renders and the slider recomputes.
+
+**Status: complete.** Verified: app 22 files / 108 tests + `tsc` clean; serve watcher/conformance/scripted tests pass.
+
+**Deviation from ADR-0011 wording:** the ADR said `CREATE VIEW`; implemented as `CREATE OR REPLACE TABLE` because `duckdb_tables()` (which `SessionTables.exists` → `/data/{ref}` resolve against) lists tables, not views — a view would be invisible to the data endpoint. A table is also more faithful to "materialize once" (the CSV is read once, not re-scanned per fetch). Same shared-session, same ADR intent.
 
 ## Blocked by
 

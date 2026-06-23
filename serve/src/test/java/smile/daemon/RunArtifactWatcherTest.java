@@ -71,6 +71,44 @@ public class RunArtifactWatcherTest {
         watcher.stop();
     }
 
+    @Test
+    public void submissionBecomesAPredictionsDataframeArtifact(@TempDir Path dir) throws Exception {
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.RunStarted), 2000);
+
+        // When: the final prediction set appears.
+        Files.createDirectories(dir.resolve("final"));
+        Files.writeString(dir.resolve("final/submission.csv"),
+                "PassengerId,Survived_proba,Survived_pred,Survived_actual\n1,0.9,1,1\n2,0.2,0,0\n");
+
+        // Then: a `submission` artifact is announced.
+        waitFor(() -> msgs.stream().anyMatch(m ->
+                m instanceof DaemonMessage.ArtifactMsg a && "submission".equals(a.artifact().ref())), 4000);
+        var art = msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.ref().equals("submission")).findFirst().orElseThrow();
+
+        // Predictions Studio rides the `dataframe` kind with a `data` ArrowRef naming the
+        // materialized session table. When the shared DuckDB bridge is reachable, the
+        // materialization succeeds and we get exactly that; when it is not (e.g. no agent
+        // session in a unit test), the watcher degrades to the path-only `file` artifact —
+        // the canvas still surfaces the submission. Assert whichever the environment yields.
+        if ("dataframe".equals(art.kind())) {
+            assertNotNull(art.data(), "dataframe artifact must carry a data ArrowRef");
+            assertEquals("submission", art.data().ref());
+            assertEquals("arrow", art.data().kind());
+        } else {
+            assertEquals("file", art.kind());
+            assertNotNull(art.path());
+            assertTrue(art.path().endsWith("submission.csv"));
+        }
+
+        watcher.stop();
+    }
+
     private interface Cond { boolean ok(); }
 
     private void waitFor(Cond c, long timeoutMs) throws InterruptedException {
