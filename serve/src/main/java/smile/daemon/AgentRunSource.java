@@ -29,7 +29,6 @@ import ioa.agent.Agent;
 import ioa.llm.client.LLM;
 import ioa.llm.client.StreamResponseHandler;
 import ioa.llm.tool.Question;
-import ioa.llm.tool.Tool;
 import smile.daemon.DaemonMessage.*;
 
 /**
@@ -100,12 +99,15 @@ public class AgentRunSource implements RunSource {
             synchronized (AGENT_INIT_LOCK) {
                 var spec = Agent.Spec.of("analyst");
                 llm = llmFactory.get();
+                // The Agent constructor already seeds the conversation with the full default
+                // toolset (file + shell + data + planning + web) whenever the spec declares no
+                // explicit `tools:` — which the analyst AGENT.md doesn't. Adding Tool.file()/
+                // shell()/data()/planning() on top would register every one of those names a
+                // SECOND time. The OpenAI-compatible (bedrock) path tolerated the duplicates,
+                // but the NATIVE Anthropic API rejects them with "tools: Tool names must be
+                // unique." (400). So we rely on the constructor's defaults and add nothing —
+                // matching the desktop Studio, which used `new Analyst(...)` with no extra adds.
                 agent = new Agent(spec, () -> llm, workingDir);
-                // Clair's skills run Python, read/write files, and visualize data.
-                agent.conversation().addTools(Tool.file());
-                agent.conversation().addTools(Tool.shell());
-                agent.conversation().addTools(Tool.data());
-                agent.conversation().addTools(Tool.planning());
             }
         } catch (Throwable t) {
             LOG.error("Failed to initialize Clair agent", t);

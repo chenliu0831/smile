@@ -12,7 +12,7 @@ import {
   setLlmConfig,
   setSessionCredential,
   PROVIDERS,
-  PROVIDER_ENV_VAR,
+  credentialEnvVar,
   type LlmConfig,
 } from "../daemon/llmConfig";
 
@@ -41,7 +41,9 @@ export function SettingsDialog({ onClose, onSaved }: { onClose: () => void; onSa
 
   const needsBaseUrl = PROVIDERS.find((p) => p.id === provider)?.needsBaseUrl ?? false;
   const canSave = !!model && (!needsBaseUrl || !!baseUrl);
-  const envVar = PROVIDER_ENV_VAR[provider];
+  // Bedrock-aware: an Anthropic provider on a Bedrock base URL reads the Bedrock bearer token,
+  // not ANTHROPIC_API_KEY (matches the Shell/daemon rule), so this tracks the base URL too.
+  const envVar = credentialEnvVar(provider, baseUrl);
 
   async function save() {
     setSaving(true);

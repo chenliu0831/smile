@@ -80,6 +80,17 @@ fn token_env_var(provider: &str) -> &'static str {
     }
 }
 
+/// The env var holding a config's credential, accounting for the native `anthropic` provider
+/// pointed at a Bedrock endpoint: like the desktop Studio, it authenticates with the Bedrock
+/// bearer token (`AWS_BEARER_TOKEN_BEDROCK`) rather than an Anthropic API key. Otherwise this
+/// is just the provider's own var. The daemon's `newLlm()` keys on the same rule.
+fn credential_env_var(cfg: &LlmConfig) -> &'static str {
+    if cfg.provider == "anthropic" && cfg.base_url.contains("bedrock") {
+        return "AWS_BEARER_TOKEN_BEDROCK";
+    }
+    token_env_var(&cfg.provider)
+}
+
 /// Builds the daemon JVM invocation from config + credential + session token + paths.
 /// Pure: no I/O, no process spawn — this is the unit under test.
 ///
@@ -128,7 +139,7 @@ pub fn build_daemon_invocation(
 
     let mut env = Vec::new();
     if !credential.is_empty() {
-        env.push((token_env_var(&cfg.provider).to_string(), credential.to_string()));
+        env.push((credential_env_var(cfg).to_string(), credential.to_string()));
     }
     // The agent's Python-backed skills run `python3 -m ioa.agent...`, which resolves
     // the `ioa` package by zipimport FROM the ioa-agent jar — so that jar must be on
@@ -203,9 +214,6 @@ impl SessionCredentials {
             m.insert(provider, key);
         }
     }
-    fn has(&self, provider: &str) -> bool {
-        self.get(provider).is_some()
-    }
 }
 
 pub struct RunningDaemon {
@@ -276,7 +284,7 @@ fn get_llm_config(app: tauri::AppHandle, creds: State<SessionCredentials>) -> Re
         .unwrap_or_default();
     // has_key reflects whether a credential is available from EITHER the provider's env var
     // OR the session-only key pasted in Settings (in-memory). The value never reaches here.
-    cfg.has_key = !credential_for(&cfg.provider, &creds).is_empty();
+    cfg.has_key = !credential_for(&cfg, &creds).is_empty();
     Ok(cfg)
 }
 
@@ -301,16 +309,17 @@ fn set_session_credential(creds: State<SessionCredentials>, provider: String, ke
     creds.set(provider, key);
 }
 
-/// The LLM credential for a provider: the provider's environment variable if set, else the
-/// session-only key pasted in Settings (in-memory, never persisted). Env wins so existing
+/// The LLM credential for a config: its credential environment variable if set (Bedrock-aware
+/// for the native anthropic provider — see `credential_env_var`), else the session-only key
+/// pasted in Settings (in-memory, never persisted), keyed by provider. Env wins so existing
 /// env-based setups are unchanged; the session store is the override for a GUI launch that
 /// inherits no shell env. Returns "" when neither is present.
-fn credential_for(provider: &str, creds: &SessionCredentials) -> String {
-    let env = std::env::var(token_env_var(provider)).unwrap_or_default();
+fn credential_for(cfg: &LlmConfig, creds: &SessionCredentials) -> String {
+    let env = std::env::var(credential_env_var(cfg)).unwrap_or_default();
     if !env.is_empty() {
         return env;
     }
-    creds.get(provider).unwrap_or_default()
+    creds.get(&cfg.provider).unwrap_or_default()
 }
 
 /// Resolve the daemon's working directory. The webview passes "." as a cold-start sentinel
@@ -362,14 +371,14 @@ fn start_daemon(
     }
 
     let cfg = get_llm_config(app, creds.clone())?;
-    let credential = credential_for(&cfg.provider, &creds);
+    let credential = credential_for(&cfg, &creds);
     // No credential (neither env var nor a session key pasted in Settings) → don't spawn a
     // doomed daemon. The user sets the provider's token env var (e.g. AWS_BEARER_TOKEN_BEDROCK)
     // OR pastes a key in Settings, then reconnects.
     if credential.is_empty() {
         return Err(format!(
             "no LLM credential found — set {} in your environment (e.g. ~/.zshrc) and relaunch",
-            token_env_var(&cfg.provider)
+            credential_env_var(&cfg)
         ));
     }
     let session_token = generate_session_token();
@@ -638,6 +647,40 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_on_bedrock_base_url_uses_the_bedrock_bearer_token_env() {
+        // Native Anthropic provider pointed at a Bedrock endpoint authenticates with the
+        // Bedrock bearer token (desktop Studio's rule), NOT ANTHROPIC_API_KEY.
+        let inv = build_daemon_invocation(
+            &cfg("anthropic", "https://bedrock-runtime.us-west-2.amazonaws.com", "claude-opus-4-8"),
+            "bedrock-token",
+            "sess",
+            "/x.jar",
+            "/repo",
+            "/repo/serve/lib/ioa-agent-1.0.0.jar",
+            "/repo/serve/ioa-overlay",
+            8000,
+        );
+        assert!(inv
+            .env
+            .contains(&("AWS_BEARER_TOKEN_BEDROCK".to_string(), "bedrock-token".to_string())));
+        assert!(!inv.env.iter().any(|(k, _)| k == "ANTHROPIC_API_KEY"));
+        // The base URL still reaches the daemon so it publishes anthropic.baseUrl.
+        assert!(inv.args.iter().any(|a| a
+            == "-Dsmile.daemon.llm.baseUrl=https://bedrock-runtime.us-west-2.amazonaws.com"));
+    }
+
+    #[test]
+    fn credential_env_var_is_bedrock_aware_for_anthropic() {
+        assert_eq!(credential_env_var(&cfg("anthropic", "", "m")), "ANTHROPIC_API_KEY");
+        assert_eq!(
+            credential_env_var(&cfg("anthropic", "https://foo.bedrock.aws/", "m")),
+            "AWS_BEARER_TOKEN_BEDROCK"
+        );
+        assert_eq!(credential_env_var(&cfg("bedrock", "https://x/v1", "m")), "AWS_BEARER_TOKEN_BEDROCK");
+        assert_eq!(credential_env_var(&cfg("openai", "https://bedrock/x", "m")), "OPENAI_API_KEY");
+    }
+
+    #[test]
     fn missing_credential_yields_no_env_override_but_keeps_session_token() {
         let inv = build_daemon_invocation(
             &cfg("bedrock", "u", "m"), "", "sess", "/x.jar", "/repo", "", "", 8000,
@@ -737,15 +780,13 @@ mod tests {
     }
 
     #[test]
-    fn session_credentials_set_get_has_and_clear() {
+    fn session_credentials_set_get_and_clear() {
         let c = SessionCredentials::default();
-        assert!(!c.has("anthropic"));
+        assert_eq!(c.get("anthropic"), None);
         c.set("anthropic".into(), "sk-ant-123".into());
         assert_eq!(c.get("anthropic").as_deref(), Some("sk-ant-123"));
-        assert!(c.has("anthropic"));
         // empty key clears it (so a blank Settings field removes the override)
         c.set("anthropic".into(), "".into());
-        assert!(!c.has("anthropic"));
         assert_eq!(c.get("anthropic"), None);
     }
 
@@ -753,20 +794,22 @@ mod tests {
     fn credential_for_prefers_env_then_session_key() {
         // Use a provider whose env var we can safely toggle in this test.
         let creds = SessionCredentials::default();
-        let var = token_env_var("anthropic"); // ANTHROPIC_API_KEY
+        let c = cfg("anthropic", "", "m"); // public-API Anthropic → ANTHROPIC_API_KEY
+        let var = credential_env_var(&c);
+        assert_eq!(var, "ANTHROPIC_API_KEY");
         let prev = std::env::var(var).ok();
 
         // No env, no session key → empty.
         std::env::remove_var(var);
-        assert_eq!(credential_for("anthropic", &creds), "");
+        assert_eq!(credential_for(&c, &creds), "");
 
-        // Session key only → used.
+        // Session key only → used (keyed by provider).
         creds.set("anthropic".into(), "sess-key".into());
-        assert_eq!(credential_for("anthropic", &creds), "sess-key");
+        assert_eq!(credential_for(&c, &creds), "sess-key");
 
         // Env var set → WINS over the session key.
         std::env::set_var(var, "env-key");
-        assert_eq!(credential_for("anthropic", &creds), "env-key");
+        assert_eq!(credential_for(&c, &creds), "env-key");
 
         match prev {
             Some(v) => std::env::set_var(var, v),

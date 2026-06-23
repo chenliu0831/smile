@@ -23,6 +23,19 @@ export const PROVIDER_ENV_VAR: Record<LlmConfig["provider"], string> = {
   anthropic: "ANTHROPIC_API_KEY",
 };
 
+/**
+ * The env var a config's credential is actually read from. Mirrors the Shell/daemon rule: the
+ * native `anthropic` provider pointed at a Bedrock base URL authenticates with the Bedrock
+ * bearer token (`AWS_BEARER_TOKEN_BEDROCK`), exactly like the desktop Studio — NOT
+ * `ANTHROPIC_API_KEY`. Every other case is just the provider's own var.
+ */
+export function credentialEnvVar(provider: LlmConfig["provider"], baseUrl: string): string {
+  if (provider === "anthropic" && baseUrl.includes("bedrock")) {
+    return "AWS_BEARER_TOKEN_BEDROCK";
+  }
+  return PROVIDER_ENV_VAR[provider];
+}
+
 export const PROVIDERS: { id: LlmConfig["provider"]; label: string; needsBaseUrl: boolean }[] = [
   { id: "anthropic", label: "Anthropic", needsBaseUrl: false },
   { id: "openai", label: "OpenAI", needsBaseUrl: false },

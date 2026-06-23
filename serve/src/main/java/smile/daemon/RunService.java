@@ -21,6 +21,7 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 import jakarta.enterprise.context.ApplicationScoped;
 import org.eclipse.microprofile.config.inject.ConfigProperty;
+import ioa.llm.client.Anthropic;
 import ioa.llm.client.ChatCompletions;
 import ioa.llm.client.LLM;
 
@@ -47,6 +48,11 @@ public class RunService {
      * {@code bedrock} (Claude on Bedrock via the OpenAI-compatible ChatCompletions API —
      * base URL from {@code smile.daemon.llm.baseUrl}, bearer token from the
      * {@code AWS_BEARER_TOKEN_BEDROCK} environment variable).
+     *
+     * <p>The native {@code anthropic} provider also speaks to Bedrock: point
+     * {@code smile.daemon.llm.baseUrl} at a Bedrock endpoint and it authenticates with
+     * {@code AWS_BEARER_TOKEN_BEDROCK} (the same env var) instead of an Anthropic API key —
+     * mirroring the desktop Smile Studio.
      */
     @ConfigProperty(name = "smile.daemon.llm.provider", defaultValue = "anthropic")
     String provider;
@@ -109,10 +115,18 @@ public class RunService {
     }
 
     /**
-     * Builds the LLM client for the agent engine. For {@code bedrock}, uses the
-     * OpenAI-compatible {@link ChatCompletions} client pointed at {@code baseUrl} with
-     * the bearer token from {@code AWS_BEARER_TOKEN_BEDROCK} — the same path the studio
-     * uses for Claude on Bedrock. Otherwise uses the native provider via {@link LLM#of}.
+     * Builds the LLM client for the agent engine. Two ways to reach Claude on Bedrock:
+     * <ul>
+     *   <li>{@code bedrock} — the OpenAI-compatible {@link ChatCompletions} client pointed at
+     *       {@code baseUrl}, bearer token from {@code AWS_BEARER_TOKEN_BEDROCK}.</li>
+     *   <li>{@code anthropic} with a Bedrock {@code baseUrl} — the NATIVE {@link Anthropic}
+     *       client. Following the desktop Studio, we publish {@code baseUrl} to ioa's
+     *       {@code anthropic.baseUrl} property and, when no {@code ANTHROPIC_API_KEY} is set,
+     *       the {@code AWS_BEARER_TOKEN_BEDROCK} value to {@code anthropic.apiKey} — both read
+     *       by the Anthropic SDK's {@code fromEnv()} when the client first initializes.</li>
+     * </ul>
+     * Otherwise uses the native provider via {@link LLM#of} (Anthropic against the public API
+     * reads {@code ANTHROPIC_API_KEY} directly).
      */
     private LLM newLlm() {
         if ("bedrock".equalsIgnoreCase(provider)) {
@@ -127,6 +141,25 @@ public class RunService {
                         "bedrock provider requires smile.daemon.llm.baseUrl (the Bedrock OpenAI-compatible endpoint)");
             }
             return new ChatCompletions(url, token, model);
+        }
+        if ("anthropic".equalsIgnoreCase(provider)) {
+            // The native Anthropic client reads its base URL and credential from system
+            // properties via the SDK's fromEnv(), which runs when the client first
+            // initializes. Publish them BEFORE constructing Anthropic (its first active use).
+            String url = baseUrl();
+            if (!url.isBlank()) {
+                System.setProperty(Anthropic.BASE_URL_PROPERTY_KEY, url);
+            }
+            // Bedrock base URL + no Anthropic API key ⇒ authenticate with the Bedrock bearer
+            // token (the desktop Studio's exact rule). Otherwise leave credentials to fromEnv,
+            // which reads ANTHROPIC_API_KEY for the public API.
+            if (url.contains("bedrock") && System.getProperty(Anthropic.API_KEY_PROPERTY_KEY) == null) {
+                String token = System.getenv("AWS_BEARER_TOKEN_BEDROCK");
+                if (token != null && !token.isBlank()) {
+                    System.setProperty(Anthropic.API_KEY_PROPERTY_KEY, token);
+                }
+            }
+            return new Anthropic(model);
         }
         return LLM.of(provider, model);
     }
