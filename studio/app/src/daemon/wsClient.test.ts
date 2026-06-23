@@ -28,6 +28,10 @@ class FakeWebSocket {
     this.readyState = 3;
     this.onclose?.();
   }
+  /** Simulate a socket error (e.g. the daemon killed out from under us during a reconnect). */
+  serverError() {
+    this.onerror?.();
+  }
 }
 
 function setup(token?: string) {
@@ -104,4 +108,27 @@ test("a deliberate stop() close does NOT report a lost connection", () => {
   conn.stop();
   fake.onclose?.(); // close event fired by the deliberate stop
   expect(seen).toHaveLength(0);
+});
+
+// Regression: switching provider / saving Settings calls reconnect → teardown → stop() on the
+// old connection while killing the daemon, which fires the socket's onERROR (not just onclose).
+// onerror previously ignored the `closing` flag and surfaced a spurious
+// "Connection to the daemon failed." even though the NEW connection was fine.
+test("a deliberate stop() then onerror does NOT report a failed connection (reconnect race)", () => {
+  const { fake, conn } = setup();
+  const seen: DaemonMessage[] = [];
+  conn.subscribe((m) => seen.push(m));
+  conn.stop();
+  fake.serverError(); // error event fired by the deliberate stop / daemon kill
+  expect(seen).toHaveLength(0);
+});
+
+// And the genuine failure path still works: an onerror WITHOUT a deliberate stop surfaces.
+test("an unexpected onerror (no stop) surfaces a failed connection", () => {
+  const { fake, conn } = setup();
+  const seen: DaemonMessage[] = [];
+  conn.subscribe((m) => seen.push(m));
+  fake.serverError();
+  expect(seen.map((m) => m.type)).toEqual(["agent-chunk", "run-finished"]);
+  expect((seen[0] as { text: string }).text).toMatch(/failed/i);
 });

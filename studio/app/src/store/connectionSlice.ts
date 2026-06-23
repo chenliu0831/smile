@@ -57,6 +57,9 @@ export const createConnectionSlice =
     // `connection`, orphaning connect#1's socket with its subscription still pushing frames
     // into the reducer (duplicate frames + a leaked WS + a second daemon agent session).
     let epoch = 0;
+    // Unsubscribe handle for the current connection's frame listener, so teardown fully severs
+    // the old connection's frames (belt-and-braces with the wsClient close/error guards).
+    let unsub: (() => void) | null = null;
     return {
       connection: null,
       httpBase: null,
@@ -74,8 +77,10 @@ export const createConnectionSlice =
           conn.stop();
           return;
         }
-        // Subscribe BEFORE start() so no early frame (the greeting) is missed.
-        conn.subscribe((msg) => get().applyMessage(msg));
+        // Subscribe BEFORE start() so no early frame (the greeting) is missed. Keep the unsub
+        // so teardown severs this listener (a superseded/old connection can't leak frames).
+        unsub?.();
+        unsub = conn.subscribe((msg) => get().applyMessage(msg));
         conn.start();
         const base = conn.httpBase();
         set({ connection: conn, mode, httpBase: base });
@@ -89,6 +94,8 @@ export const createConnectionSlice =
 
       teardown: () => {
         epoch++; // invalidate any in-flight connect() so it won't start/store its connection
+        unsub?.(); // sever the old connection's frame listener before stopping it
+        unsub = null;
         get().connection?.stop();
         set({ connection: null });
       },

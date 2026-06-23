@@ -62,7 +62,13 @@ export class WebSocketRunConnection implements RunConnection {
         // Ignore malformed frames.
       }
     };
-    this.ws.onerror = () => this.fail("Connection to the daemon failed.");
+    this.ws.onerror = () => {
+      // A deliberate stop() (unmount / reconnect) tears the socket down, which fires onerror
+      // AND/OR onclose asynchronously — both must stay quiet, or a reconnect (Settings save,
+      // provider switch) surfaces a spurious "Connection to the daemon failed." even though
+      // the NEW connection is fine. (This guard was missing on onerror — the actual bug.)
+      if (!this.closing) this.fail("Connection to the daemon failed.");
+    };
     this.ws.onclose = () => {
       // A deliberate stop() (unmount / reconnect) is expected — stay quiet. ANY other close
       // means the daemon died (crash, killed, expired-token disconnect). Previously this only
