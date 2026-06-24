@@ -33,6 +33,84 @@ import static org.junit.jupiter.api.Assertions.*;
 public class RunArtifactWatcherTest {
 
     @Test
+    public void backfillsSkippedEarlyStagesAndAcceptsVariantFilenames(@TempDir Path dir) throws Exception {
+        // Reproduces a real agent run that did EDA INLINE (no output/eda_report.md), named the
+        // leaderboard `leaderboard.csv` (not candidate_scores.md), skipped train_clean.csv, and
+        // finished with final/submission.csv. The timeline must NOT strand on EDA.
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.RunStarted), 2000);
+
+        Files.createDirectories(dir.resolve("output"));
+        Files.createDirectories(dir.resolve("final"));
+        Files.writeString(dir.resolve("output/train_features.csv"), "a,b\n1,2\n");          // features (variant of preprocess too)
+        Files.writeString(dir.resolve("output/leaderboard.csv"), "model,auc\nrf,0.88\n");   // candidates VARIANT
+        Files.writeString(dir.resolve("output/solution_final.py"), "print('x')\n");          // solution
+        Files.writeString(dir.resolve("final/submission.csv"), "id,pred\n1,0\n");            // submission (last stage)
+
+        // All stages up to submission should end 'done' — including EDA (backfilled) and
+        // preprocess (skipped), even though eda_report.md / train_clean.csv never existed.
+        waitFor(() -> latestStatus(msgs, "submission") == DaemonMessage.StageStatus.done, 5000);
+        waitFor(() -> latestStatus(msgs, "eda") == DaemonMessage.StageStatus.done, 2000);
+        assertEquals(DaemonMessage.StageStatus.done, latestStatus(msgs, "eda"), "EDA must backfill to done, not strand at running");
+        assertEquals(DaemonMessage.StageStatus.done, latestStatus(msgs, "preprocess"), "skipped preprocess must backfill to done");
+        assertEquals(DaemonMessage.StageStatus.done, latestStatus(msgs, "candidates"), "leaderboard.csv variant marks candidates done");
+
+        // The candidates stage still emits a leaderboard artifact (from the variant file).
+        assertTrue(msgs.stream().anyMatch(m -> m instanceof DaemonMessage.ArtifactMsg a
+                && a.artifact().ref().equals("candidates") && a.artifact().kind().equals("leaderboard")),
+                "leaderboard artifact emitted from the variant filename");
+
+        watcher.stop();
+    }
+
+    @Test
+    public void prefersRealContentOverAStubCanonicalFile(@TempDir Path dir) throws Exception {
+        // The agent wrote a 25-byte stub `candidate_scores.md` but the real 9-model table in
+        // `leaderboard.csv`. The candidates artifact must carry the REAL data, not the stub.
+        // Write BOTH files before the watcher's first scan so the stub-skip (not poll timing)
+        // is what's under test: a stub canonical file alongside a richer variant.
+        Files.createDirectories(dir.resolve("output"));
+        Files.writeString(dir.resolve("output/candidate_scores.md"), "# Candidate Leaderboard\n\n"); // 25-byte stub
+        // A realistically-sized CSV (well over the stub threshold), as real runs produce.
+        String realCsv = "model,auc,auc_std,acc,f1,runtime_s\n"
+            + "rf,0.8848224842616559,0.01959864013431618,0.8383838383838383,0.7811550151975684,2.16\n"
+            + "xgb,0.8833098989124298,0.024076775407834587,0.8271604938271605,0.7694610778443114,1.19\n"
+            + "logreg,0.8711293260473589,0.02036794410472825,0.8327721661054994,0.7792592592592592,2.18\n";
+        Files.writeString(dir.resolve("output/leaderboard.csv"), realCsv);
+
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.RunStarted), 2000);
+
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.ArtifactMsg a
+                && a.artifact().ref().equals("candidates")), 4000);
+        var art = msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.ref().equals("candidates")).findFirst().orElseThrow();
+        assertEquals("leaderboard", art.kind());
+        assertNotNull(art.body());
+        assertTrue(art.body().contains("model,auc"), "candidates artifact must carry the real leaderboard.csv, not the stub");
+        assertTrue(art.body().contains("rf,0.884"), "real model rows present");
+
+        watcher.stop();
+    }
+
+    /** The latest status emitted for a given stage id, or null if none. */
+    private static DaemonMessage.StageStatus latestStatus(java.util.List<DaemonMessage> msgs, String stageId) {
+        return msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.StageProgress)
+                .map(m -> ((DaemonMessage.StageProgress) m).stage())
+                .filter(s -> s.stageId().equals(stageId))
+                .reduce((a, b) -> b)
+                .map(DaemonMessage.Stage::status)
+                .orElse(null);
+    }
+
+    @Test
     public void seedsTimelineAndAnnouncesArtifactWhenFileAppears(@TempDir Path dir) throws Exception {
         var msgs = new CopyOnWriteArrayList<DaemonMessage>();
         var watcher = new RunArtifactWatcher("s1", dir, msgs::add);

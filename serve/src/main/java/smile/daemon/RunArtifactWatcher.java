@@ -46,21 +46,67 @@ import smile.daemon.DaemonMessage.*;
  * @author Haifeng Li
  */
 public final class RunArtifactWatcher {
-    /** A pipeline stage keyed to the artifact file whose existence marks it done. */
-    private record StageSpec(String stageId, String label, String relPath, String artifactKind, String artifactTitle) {}
+    /**
+     * A pipeline stage marked done by the FIRST of its candidate files to appear. The agent
+     * doesn't always honor the skill's canonical filename (it may do EDA inline, name the
+     * leaderboard {@code leaderboard.csv} instead of {@code candidate_scores.md}, skip
+     * {@code train_clean.csv}, etc.), so each stage lists its canonical name plus the common
+     * variants this codebase has observed real runs produce. The canonical name is first; it
+     * is the one the {@code artifactKind} body/preview is built from when present.
+     */
+    private record StageSpec(String stageId, String label, List<String> relPaths, String artifactKind, String artifactTitle) {
+        /** The canonical (preferred) relative path. */
+        String canonical() { return relPaths.get(0); }
+    }
 
-    /** The automl skill's stages in order, each completed by a known output file. */
+    /** The automl skill's stages in order, each completed by the first of its files to appear. */
     private static final List<StageSpec> STAGES = List.of(
-        new StageSpec("eda", "Exploratory Data Analysis", "output/eda_report.md", "report", "EDA Report"),
-        new StageSpec("preprocess", "Preprocessing", "output/train_clean.csv", null, null),
-        new StageSpec("features", "Feature Engineering", "output/train_features.csv", null, null),
-        new StageSpec("candidates", "Candidate Evaluation", "output/candidate_scores.md", "leaderboard", "Leaderboard"),
-        new StageSpec("refine", "Iterative Refinement", "output/refinement_log.md", "report", "Refinement Log"),
-        new StageSpec("solution", "Final Solution", "output/solution_final.py", "file", "solution_final.py"),
-        new StageSpec("evaluate", "Final Evaluation", "output/model_evaluation_report.md", "report", "Evaluation Report"),
-        new StageSpec("report", "Report", "output/automl_report.md", "report", "AutoML Report"),
-        new StageSpec("submission", "Submission", "final/submission.csv", "file", "submission.csv")
+        new StageSpec("eda", "Exploratory Data Analysis",
+            List.of("output/eda_report.md", "output/eda_summary.json", "summary.md", "output/eda.py"), "report", "EDA Report"),
+        new StageSpec("preprocess", "Preprocessing",
+            List.of("output/train_clean.csv", "output/preprocess_features.py"), null, null),
+        new StageSpec("features", "Feature Engineering",
+            List.of("output/train_features.csv"), null, null),
+        new StageSpec("candidates", "Candidate Evaluation",
+            List.of("output/candidate_scores.md", "output/leaderboard.csv", "output/run_candidates.py"), "leaderboard", "Leaderboard"),
+        new StageSpec("refine", "Iterative Refinement",
+            List.of("output/refinement_log.md", "output/leaderboard_final.csv"), "report", "Refinement Log"),
+        new StageSpec("solution", "Final Solution",
+            List.of("output/solution_final.py"), "file", "solution_final.py"),
+        new StageSpec("evaluate", "Final Evaluation",
+            List.of("output/model_evaluation_report.md", "output/postprocess_results.json"), "report", "Evaluation Report"),
+        new StageSpec("report", "Report",
+            List.of("output/automl_report.md", "output/summary.md"), "report", "AutoML Report"),
+        new StageSpec("submission", "Submission",
+            List.of("final/submission.csv", "output/submission.csv"), "file", "submission.csv")
     );
+
+    /** A file smaller than this is treated as a stub/placeholder and skipped in favor of a
+     * later alias with real content (e.g. a 25-byte `# Candidate Leaderboard\n\n` stub while
+     * the real table is in `leaderboard.csv`). Falls back to the stub only if nothing else. */
+    private static final long STUB_BYTES = 64;
+
+    /**
+     * Resolve a stage's preferred existing file under the working dir, or null if none exist
+     * yet. Prefers the FIRST alias whose content is non-trivial (≥ {@value #STUB_BYTES} bytes);
+     * if every present alias is a stub, returns the first present one so the stage still
+     * completes. This stops a placeholder file (canonical name, empty body) from shadowing a
+     * richer variant the agent actually filled in.
+     */
+    private Path firstExisting(StageSpec spec) {
+        Path firstAny = null;
+        for (String rel : spec.relPaths()) {
+            Path p = workingDir.resolve(rel);
+            if (!Files.isRegularFile(p)) continue;
+            if (firstAny == null) firstAny = p;
+            if (sizeOf(p) >= STUB_BYTES) return p; // first non-stub wins
+        }
+        return firstAny; // all present aliases are stubs (or none) → first present, else null
+    }
+
+    private static long sizeOf(Path p) {
+        try { return Files.size(p); } catch (IOException e) { return 0L; }
+    }
 
     /** A public JSON sidecar surfaced as a structured artifact (ADR-0011/0014): its parsed
      * JSON rides the artifact's {@code meta} and the consumer parses it. */
@@ -130,26 +176,39 @@ public final class RunArtifactWatcher {
     /** Emit progress/artifacts for any stage files that have newly appeared. */
     private void scanOnce() {
         boolean anyDoneThisScan = false;
-        for (StageSpec spec : STAGES) {
-            if (announcedStages.contains(spec.stageId())) continue;
-            Path file = workingDir.resolve(spec.relPath());
-            if (!Files.isRegularFile(file)) continue;
+        // Index of the latest stage marked done this lifetime, so we can BACKFILL earlier
+        // stages the agent skipped (e.g. it did EDA inline and never wrote eda_report.md, but
+        // later stages completed — EDA must not strand the whole timeline at 'running').
+        int latestDoneIdx = -1;
+        for (int i = 0; i < STAGES.size(); i++) {
+            StageSpec spec = STAGES.get(i);
+            if (announcedStages.contains(spec.stageId())) { latestDoneIdx = Math.max(latestDoneIdx, i); continue; }
+            Path file = firstExisting(spec);
+            if (file == null) continue;
 
             announcedStages.add(spec.stageId());
             anyDoneThisScan = true;
-            List<String> refs = spec.artifactKind() != null ? List.of(spec.stageId()) : List.of();
-            emit.accept(new StageProgress(sessionId,
-                new Stage(spec.stageId(), spec.label(), StageStatus.done, refs, spec.relPath())));
+            latestDoneIdx = Math.max(latestDoneIdx, i);
+            emitStageDone(spec, file);
+        }
 
-            if (spec.artifactKind() != null && announcedArtifacts.add(spec.stageId())) {
-                emit.accept(new ArtifactMsg(sessionId, buildArtifact(spec, file)));
-                // Seed the report's mtime key so rescanReportMtime only fires on a LATER
-                // regeneration, not as a duplicate of this first emit.
-                if ("report".equals(spec.stageId())) {
-                    announcedArtifacts.add("report-mtime:" + mtimeOf(file));
+        // BACKFILL: any stage BEFORE the latest completed one that is still pending was
+        // skipped or done inline by the agent. Mark it done (no artifact — none was written)
+        // so the timeline advances instead of stranding on a missing early file.
+        if (latestDoneIdx >= 0) {
+            for (int i = 0; i < latestDoneIdx; i++) {
+                StageSpec spec = STAGES.get(i);
+                if (announcedStages.add(spec.stageId())) {
+                    anyDoneThisScan = true;
+                    // Try its files anyway (a variant may exist); else mark done with no ref.
+                    Path file = firstExisting(spec);
+                    if (file != null) emitStageDone(spec, file);
+                    else emit.accept(new StageProgress(sessionId,
+                        new Stage(spec.stageId(), spec.label(), StageStatus.done, List.of(), null)));
                 }
             }
         }
+
         // Give the Timeline a live current-stage: once any stage has completed (so a real
         // automl run is underway), mark the FIRST not-yet-done stage as running. Without
         // this, stages jump pending->done and the pipeline never shows an in-progress step
@@ -168,6 +227,19 @@ public final class RunArtifactWatcher {
         scanFreeformArtifacts();
         scanJsonSidecars();
         rescanReportMtime();
+    }
+
+    /** Emit a stage's done transition + its artifact (if it carries one), deduped. */
+    private void emitStageDone(StageSpec spec, Path file) {
+        List<String> refs = spec.artifactKind() != null ? List.of(spec.stageId()) : List.of();
+        emit.accept(new StageProgress(sessionId,
+            new Stage(spec.stageId(), spec.label(), StageStatus.done, refs, workingDir.relativize(file).toString())));
+        if (spec.artifactKind() != null && announcedArtifacts.add(spec.stageId())) {
+            emit.accept(new ArtifactMsg(sessionId, buildArtifact(spec, file)));
+            if ("report".equals(spec.stageId())) {
+                announcedArtifacts.add("report-mtime:" + mtimeOf(file));
+            }
+        }
     }
 
     /**

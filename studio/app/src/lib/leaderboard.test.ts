@@ -78,6 +78,23 @@ test("ranks best-first for a lower-is-better metric (RMSE)", () => {
   ]);
 });
 
+test("parses a CSV leaderboard (real run: leaderboard.csv) with header synonyms", () => {
+  const csv = `model,auc,auc_std,acc,f1,runtime_s
+rf,0.8848,0.0196,0.838,0.781,2.16
+xgb,0.8833,0.0241,0.827,0.769,1.19
+logreg,0.8711,0.0204,0.833,0.779,2.18`;
+  const board = parseLeaderboard(csv, { metric: "AUC", higherIsBetter: true });
+  expect(board.rows.map((r) => r.name)).toEqual(["rf", "xgb", "logreg"]); // sorted by auc desc
+  expect(board.rows[0].score).toBeCloseTo(0.8848);
+  expect(board.rows[0].std).toBeCloseTo(0.0196);
+  expect(board.rows[0].runtimeSec).toBeCloseTo(2.16);
+});
+
+test("an empty/stub leaderboard body yields no rows (not a crash)", () => {
+  expect(parseLeaderboard("# Candidate Leaderboard\n\n", { metric: "AUC", higherIsBetter: true }).rows).toEqual([]);
+  expect(parseLeaderboard("", { metric: "AUC", higherIsBetter: true }).rows).toEqual([]);
+});
+
 test("classifies model type from name + notes (ensemble > tuned > default)", () => {
   expect(classifyModel("Ensemble (weighted avg)", "")).toBe("ensemble");
   expect(classifyModel("hill_climb_blend", "")).toBe("ensemble");

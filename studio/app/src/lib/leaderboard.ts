@@ -84,7 +84,74 @@ function splitRow(line: string): string[] {
     .map((c) => c.trim());
 }
 
-export function parseLeaderboard(markdown: string, spec: MetricSpec): Leaderboard {
+/**
+ * Parse a candidate leaderboard from EITHER a markdown pipe-table (the skill's
+ * `candidate_scores.md`) OR a CSV (the variant `leaderboard.csv` real runs emit, e.g.
+ * `model,auc,auc_std,acc,f1,runtime_s`). Auto-detects: a body with `|`-delimited rows is
+ * markdown; otherwise, if the first non-empty line is comma-delimited with a recognizable
+ * header, it's CSV. An empty/stub body yields an empty board (rendered as "no candidates").
+ */
+export function parseLeaderboard(source: string, spec: MetricSpec): Leaderboard {
+  const hasPipeTable = source.split("\n").some((l) => l.trim().startsWith("|"));
+  if (!hasPipeTable && looksLikeCsv(source)) return parseLeaderboardCsv(source, spec);
+  return parseLeaderboardMarkdown(source, spec);
+}
+
+/** Whether the body looks like a CSV leaderboard (comma header mentioning a score column). */
+function looksLikeCsv(source: string): boolean {
+  const first = source.split("\n").map((l) => l.trim()).find((l) => l.length > 0);
+  if (!first || !first.includes(",")) return false;
+  return /\b(auc|score|rmse|accuracy|f1|metric)\b/i.test(first);
+}
+
+/** Column synonyms for the CSV form: logical field → header names (lower-cased). */
+const CSV_NAME = ["model", "candidate", "name", "estimator"];
+const CSV_SCORE = ["auc", "score", "val_score", "cv_score", "rmse", "metric", "mean"];
+const CSV_STD = ["auc_std", "std", "std_cv", "cv_std", "stddev"];
+const CSV_RUNTIME = ["runtime_s", "runtime", "time_s", "seconds", "fit_time"];
+const CSV_NOTES = ["notes", "note", "type", "family"];
+
+function splitCsv(line: string): string[] {
+  return line.split(",").map((c) => c.trim());
+}
+
+function parseLeaderboardCsv(csv: string, spec: MetricSpec): Leaderboard {
+  const lines = csv.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  if (lines.length < 2) return { metric: spec.metric, higherIsBetter: spec.higherIsBetter, rows: [] };
+  const header = splitCsv(lines[0]).map((h) => h.toLowerCase());
+  const idxOf = (names: string[]) => header.findIndex((h) => names.includes(h));
+  const iName = idxOf(CSV_NAME);
+  const iScore = idxOf(CSV_SCORE);
+  const iStd = idxOf(CSV_STD);
+  const iRuntime = idxOf(CSV_RUNTIME);
+  const iNotes = idxOf(CSV_NOTES);
+  if (iName === -1 || iScore === -1) {
+    // Unrecognizable columns — fall back to markdown parsing (it'll yield empty, not crash).
+    return parseLeaderboardMarkdown(csv, spec);
+  }
+  const rows: Candidate[] = [];
+  for (const line of lines.slice(1)) {
+    const cells = splitCsv(line);
+    const name = cells[iName];
+    const score = Number(cells[iScore]);
+    if (!name || !Number.isFinite(score)) continue;
+    const std = iStd !== -1 ? Number(cells[iStd]) : undefined;
+    const runtimeSec = iRuntime !== -1 ? Number(cells[iRuntime]) : undefined;
+    const notes = iNotes !== -1 ? cells[iNotes] || undefined : undefined;
+    rows.push({
+      name,
+      score,
+      std: Number.isFinite(std as number) ? std : undefined,
+      runtimeSec: Number.isFinite(runtimeSec as number) ? runtimeSec : undefined,
+      notes,
+      modelType: classifyModel(name, notes),
+    });
+  }
+  rows.sort((a, b) => (spec.higherIsBetter ? b.score - a.score : a.score - b.score));
+  return { metric: spec.metric, higherIsBetter: spec.higherIsBetter, rows };
+}
+
+function parseLeaderboardMarkdown(markdown: string, spec: MetricSpec): Leaderboard {
   const lines = markdown.split("\n").map((l) => l.trim());
   const rows: Candidate[] = [];
   for (const line of lines) {

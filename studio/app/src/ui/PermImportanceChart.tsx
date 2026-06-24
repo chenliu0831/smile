@@ -53,6 +53,9 @@ export function PermImportanceChart({ artifact }: { artifact: Artifact }) {
   // Each datum: [mean (bar), mean, std] so the custom whisker series can read mean/std.
   const data = ordered.map((f) => [f.mean, f.mean, f.std ?? NaN]);
   const maxX = Math.max(...features.map((f) => f.mean + (f.std ?? 0))) * 1.1;
+  // When the source was only a ranked name list (no magnitudes), label the axis honestly.
+  const rankedOnly = features.every((f) => f.ranked);
+  const axisName = rankedOnly ? "rank (no magnitude reported)" : "mean ΔAUC";
 
   const option = {
     backgroundColor: "transparent",
@@ -64,7 +67,7 @@ export function PermImportanceChart({ artifact }: { artifact: Artifact }) {
       formatter: () => "", // tooltip content handled via the side panel; keep hover cheap
       show: false,
     },
-    xAxis: { type: "value", name: "mean ΔAUC", min: 0, max: maxX || 1, ...AXIS },
+    xAxis: { type: "value", name: axisName, min: 0, max: maxX || 1, ...AXIS },
     yAxis: { type: "category", data: names, ...AXIS },
     series: [
       {
@@ -96,7 +99,11 @@ export function PermImportanceChart({ artifact }: { artifact: Artifact }) {
 
   return (
     <div className="diagnostics">
-      <p className="diagnostics-caption">Permutation importance (mean ΔAUC ± std) — click a feature to investigate.</p>
+      <p className="diagnostics-caption">
+        {rankedOnly
+          ? "Top drivers (ranked; no magnitude reported) — click a feature to investigate."
+          : "Permutation importance (mean ΔAUC ± std) — click a feature to investigate."}
+      </p>
       <ReactECharts
         option={option}
         onEvents={onEvents}

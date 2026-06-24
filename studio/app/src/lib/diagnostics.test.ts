@@ -38,6 +38,21 @@ test("skips rows without a usable name or finite mean; never throws", () => {
   expect(rows.map((r) => r.name)).toEqual(["good"]);
 });
 
+test("parses a plain RANKED string array (real run: top5_features as names only)", () => {
+  // The observed run wrote top5_features as a bare ranked name list — no magnitudes.
+  const meta = {
+    oof_auc: 0.8876,
+    top5_features: ["Sex", "FarePerPerson", "NameLen", "Pclass", "Title_Mr"],
+  };
+  const rows = parseDiagnostics(meta);
+  expect(rows.map((r) => r.name)).toEqual(["Sex", "FarePerPerson", "NameLen", "Pclass", "Title_Mr"]);
+  // descending synthesized rank weights, all flagged ranked, no std
+  expect(rows[0].mean).toBeGreaterThan(rows[1].mean);
+  expect(rows.every((r) => r.ranked === true)).toBe(true);
+  expect(rows.every((r) => r.std === undefined)).toBe(true);
+  expect(stabilityLabel(rows[0])).toMatch(/rank only/);
+});
+
 test("returns [] for junk / empty meta (graceful absence)", () => {
   expect(parseDiagnostics(null)).toEqual([]);
   expect(parseDiagnostics({})).toEqual([]);
