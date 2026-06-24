@@ -369,6 +369,15 @@ Required checkpoint artifacts per step:
 - *"I have a training file but no separate test file — build the best model you can."*
 
 ## Output Contract
+
+> **These exact filenames are a hard contract — a desktop UI watches for them by name to
+> populate its pipeline timeline, leaderboard, and diagnostics.** Write each step's artifact
+> to its canonical path with REAL content (never an empty placeholder/stub), even if you also
+> did the analysis inline. In particular: ALWAYS write `output/eda_report.md` (EDA), record the
+> full candidate table in `output/candidate_scores.md` (a markdown table OR CSV with a header),
+> and the feature-importance with magnitudes in `output/postprocess_results.json`. Do not rely
+> on alternate filenames — emit the canonical ones below.
+
 The final deliverable is:
 1. `final/submission.csv` — test predictions (or cluster assignments) in the required format.
 2. `output/solution_final.py` — complete, runnable winning solution with fixed random seed (`RANDOM_SEED = 42`).
