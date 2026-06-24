@@ -163,6 +163,41 @@ public class RunArtifactWatcherTest {
         watcher.stop();
     }
 
+    @Test
+    public void regeneratedReportReEmitsWithStableRef(@TempDir Path dir) throws Exception {
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.RunStarted), 2000);
+
+        Files.createDirectories(dir.resolve("output"));
+        Path report = dir.resolve("output/automl_report.md");
+        Files.writeString(report, "# Report v1\n## Recommended Next Steps\n1. Do X\n");
+
+        // First emit of the report artifact.
+        waitFor(() -> reportArtifacts(msgs).stream().anyMatch(a -> a.body() != null && a.body().contains("v1")), 4000);
+
+        // Regenerate the report with new content + a later mtime.
+        Files.setLastModifiedTime(report, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() + 5000));
+        Files.writeString(report, "# Report v2\n## Recommended Next Steps\n1. Do Y\n");
+
+        // It re-emits with the SAME stable ref "report" (canvas replaces in place), new body.
+        waitFor(() -> reportArtifacts(msgs).stream().anyMatch(a -> a.body() != null && a.body().contains("v2")), 4000);
+        var reEmitted = reportArtifacts(msgs).stream()
+                .filter(a -> a.body() != null && a.body().contains("v2")).findFirst().orElseThrow();
+        assertEquals("report", reEmitted.ref());
+
+        watcher.stop();
+    }
+
+    private static java.util.List<DaemonMessage.Artifact> reportArtifacts(java.util.List<DaemonMessage> msgs) {
+        return msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.ref().equals("report"))
+                .toList();
+    }
+
     private interface Cond { boolean ok(); }
 
     private void waitFor(Cond c, long timeoutMs) throws InterruptedException {

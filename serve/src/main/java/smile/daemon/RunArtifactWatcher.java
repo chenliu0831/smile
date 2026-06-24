@@ -143,6 +143,11 @@ public final class RunArtifactWatcher {
 
             if (spec.artifactKind() != null && announcedArtifacts.add(spec.stageId())) {
                 emit.accept(new ArtifactMsg(sessionId, buildArtifact(spec, file)));
+                // Seed the report's mtime key so rescanReportMtime only fires on a LATER
+                // regeneration, not as a duplicate of this first emit.
+                if ("report".equals(spec.stageId())) {
+                    announcedArtifacts.add("report-mtime:" + mtimeOf(file));
+                }
             }
         }
         // Give the Timeline a live current-stage: once any stage has completed (so a real
@@ -162,6 +167,25 @@ public final class RunArtifactWatcher {
         }
         scanFreeformArtifacts();
         scanJsonSidecars();
+        rescanReportMtime();
+    }
+
+    /**
+     * Re-emit the AutoML report when it is regenerated (S8). The STAGES loop emits each stage
+     * artifact exactly once (keyed by stable stageId), so a re-run that overwrites
+     * {@code output/automl_report.md} would not refresh the canvas. This re-emits the report
+     * artifact whenever its mtime advances — same mtime-keyed re-emit the image path uses —
+     * with the SAME stable ref ("report") so the canvas replaces it in place rather than
+     * stacking a new tab. Only fires after the stage has been announced once.
+     */
+    private void rescanReportMtime() {
+        if (!announcedStages.contains("report")) return;
+        Path f = workingDir.resolve("output/automl_report.md");
+        if (!Files.isRegularFile(f)) return;
+        String key = "report-mtime:" + mtimeOf(f);
+        if (!announcedArtifacts.add(key)) return; // unchanged since last emit
+        emit.accept(new ArtifactMsg(sessionId,
+            new Artifact("report", "report", "AutoML Report", readBounded(f), null, null, f.toString(), null)));
     }
 
     /**

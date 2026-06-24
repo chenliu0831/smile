@@ -48,3 +48,9 @@ export const selectMetrics = (session: RunState): Artifact | undefined =>
  * JSON in `meta`, joined into the Leaderboard rows (S7). */
 export const selectParams = (session: RunState): Artifact | undefined =>
   Object.values(session.artifacts).find((a) => a.kind === "metrics" && a.ref === "params");
+
+/** The diagnostics artifact (Driver Diagnostics source), matched by KIND. Carries the
+ * permutation-importance array in `meta`; used to enrich the Ask-Clair-about-column prompt
+ * with a driver rank when present (S8 soft enhancement). */
+export const selectDiagnostics = (session: RunState): Artifact | undefined =>
+  Object.values(session.artifacts).find((a) => a.kind === "diagnostics");

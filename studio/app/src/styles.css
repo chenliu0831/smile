@@ -514,6 +514,22 @@ button {
 }
 .schema-col:hover { background: var(--bg-elev-2); color: var(--text); }
 .schema-cols em { color: var(--accent); font-style: normal; font-size: 10px; }
+.schema-ask {
+  margin-left: auto; background: transparent; border: 1px solid var(--border); color: var(--text-dim);
+  font-size: 10px; width: 16px; height: 16px; border-radius: 50%; cursor: pointer; line-height: 1;
+  opacity: 0; transition: opacity 0.1s;
+}
+.schema-cols li:hover .schema-ask { opacity: 1; }
+.schema-ask:hover { color: var(--accent); border-color: var(--accent); }
+/* Next Steps (one-click steering from the report). */
+.next-steps { margin-top: 16px; border-top: 1px dashed var(--border); padding-top: 12px; }
+.next-steps-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 8px; }
+.next-steps-buttons { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.next-step {
+  text-align: left; background: var(--bg-elev); border: 1px solid var(--border); color: var(--text);
+  font-size: 13px; padding: 6px 12px; border-radius: 6px; cursor: pointer; max-width: 100%;
+}
+.next-step:hover { border-color: var(--accent); color: var(--accent); }
 /* Query history (per-session, click-to-restore). */
 .schema-history { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
 .schema-history > summary { list-style: none; cursor: pointer; }

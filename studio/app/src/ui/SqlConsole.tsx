@@ -21,7 +21,8 @@ import {
 import { DataGrid } from "./DataGrid";
 import { agentSqlStatements, freshAgentSql } from "../lib/agentSql";
 import { canLoadDataset } from "../daemon/dataset";
-import { selectIsBusy } from "../store/selectors";
+import { selectIsBusy, selectDiagnostics } from "../store/selectors";
+import { parseDiagnostics } from "../lib/diagnostics";
 
 /** Statements that return a result set we can render in the grid. */
 const QUERY_SHAPE = /^\s*(select|with|from|table|values|pivot|unpivot|describe|show|summarize)\b/i;
@@ -346,9 +347,30 @@ export function SqlConsole({ injected }: { injected?: { sql: string; n: number }
     );
   };
 
+  // Driver-rank lookup (S8 soft enhancement, S4 data): column name → 1-based importance rank.
+  const driverRank = (() => {
+    const diag = selectDiagnostics(state);
+    if (!diag) return {} as Record<string, number>;
+    const out: Record<string, number> = {};
+    parseDiagnostics(diag.meta).forEach((f, i) => { out[f.name.toLowerCase()] = i + 1; });
+    return out;
+  })();
+
+  // Ask Clair about a specific column: seed name + dtype (+ driver rank when known), and ask
+  // for a confirming SELECT into the editor (insert-then-Run, not auto-run — ADR-0006).
+  const onAskColumn = (table: string, column: string, dtype: string) => {
+    const rank = driverRank[column.toLowerCase()];
+    const rankCtx = rank ? ` It ranked #${rank} in permutation importance.` : "";
+    askClair(
+      `How does the column "${column}" (${dtype}) in table ${table} relate to the target?${rankCtx} ` +
+        `Explain in chat, then run ONE confirming DuckDB SELECT via your SQL tool ('execute') — ` +
+        `e.g. group the target by "${column}" — so it appears in my editor. Keep it to a single statement.`,
+    );
+  };
+
   return (
     <div className="sql-workbench">
-      <SchemaRail tables={tables} history={history} onInsert={insert} onRestore={setSql} />
+      <SchemaRail tables={tables} history={history} onInsert={insert} onRestore={setSql} onAskColumn={onAskColumn} />
       <div className="surface sql-console">
         <div className="sql-editor-row">
           <textarea
@@ -503,17 +525,21 @@ function PromptBar({
   );
 }
 
-/** Left schema rail: tables/views with columns + lineage (click to insert) + query history. */
-function SchemaRail({
+/** Left schema rail: tables/views with columns + lineage (click to insert) + query history.
+ * Exported for the S8 column-affordance UAT. */
+export function SchemaRail({
   tables,
   history,
   onInsert,
   onRestore,
+  onAskColumn,
 }: {
   tables: TableInfo[];
   history: string[];
   onInsert: (text: string) => void;
   onRestore: (sql: string) => void;
+  /** Ask Clair about a specific column (name + dtype) — the S8 steering affordance. */
+  onAskColumn: (table: string, column: string, dtype: string) => void;
 }) {
   return (
     <div className="schema-rail">
@@ -540,6 +566,14 @@ function SchemaRail({
                     {c.name}
                   </button>
                   <em>{c.type}</em>
+                  <button
+                    className="schema-ask"
+                    title={`Ask Clair about ${c.name}`}
+                    aria-label={`Ask Clair about ${c.name}`}
+                    onClick={() => onAskColumn(t.name, c.name, c.type)}
+                  >
+                    ?
+                  </button>
                 </li>
               ))}
             </ul>

@@ -11,11 +11,20 @@ import { Leaderboard } from "./Leaderboard";
 import { Chart } from "./Chart";
 import { PredictionsStudio, isPredictionsArtifact } from "./PredictionsStudio";
 import { PermImportanceChart } from "./PermImportanceChart";
+import { NextSteps } from "./NextSteps";
 import { ErrorBoundary } from "./ErrorBoundary";
 
 function ArtifactView({ artifact, problemType, paramsByModel }: { artifact: Artifact; problemType?: ProblemType; paramsByModel?: ParamsByModel }) {
   if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} problemType={problemType} paramsByModel={paramsByModel} />;
-  if (artifact.kind === "report" && artifact.body) return <Markdown source={artifact.body} />;
+  if (artifact.kind === "report" && artifact.body) {
+    // The report renders as Markdown; its "Recommended Next Steps" also become steering buttons.
+    return (
+      <>
+        <Markdown source={artifact.body} />
+        <NextSteps reportMarkdown={artifact.body} />
+      </>
+    );
+  }
   if (artifact.kind === "chart" && artifact.viz) return <Chart spec={artifact.viz} />;
   // Driver Diagnostics: permutation importance carried inline in `meta` (ADR-0011).
   if (artifact.kind === "diagnostics") return <PermImportanceChart artifact={artifact} />;

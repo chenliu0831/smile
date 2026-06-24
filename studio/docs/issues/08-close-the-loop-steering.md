@@ -16,12 +16,14 @@ Scope note: "Ask Clair" is scoped to the schema rail that exists; flat-PNG chart
 
 ## Acceptance criteria
 
-- [ ] Each schema-rail column has an "Ask Clair about &lt;column&gt;" affordance that pre-seeds name + dtype (+ driver rank when available) and sends a `user-message` turn.
-- [ ] Clair's proposed SQL is inserted into the editor (insert-then-Run), not auto-executed.
-- [ ] The report's "Recommended Next Steps" render as buttons that each send a templated steering turn carrying the current solution + baseline metric.
-- [ ] A regenerated report re-emits and refreshes the canvas (watcher mtime re-emit for the report artifact).
-- [ ] A replay-fixture UAT asserts the column affordance fires a `user-message` and a Next-Steps button sends its templated turn.
+- [x] Each schema-rail column has an "Ask Clair about &lt;column&gt;" affordance that pre-seeds name + dtype (+ driver rank when available) and sends a `user-message` turn.
+- [x] Clair's proposed SQL is inserted into the editor (insert-then-Run), not auto-executed.
+- [x] The report's "Recommended Next Steps" render as buttons that each send a templated steering turn carrying the current solution + baseline metric.
+- [x] A regenerated report re-emits and refreshes the canvas (watcher mtime re-emit for the report artifact).
+- [x] A replay-fixture UAT asserts the column affordance fires a `user-message` and a Next-Steps button sends its templated turn.
 
 ## Blocked by
 
 - None — can start immediately. (Driver-rank context in the column prompt is a soft enhancement that benefits from S4 — Driver Diagnostics — but is not required.)
+
+**Status: complete.** Schema-rail per-column 'Ask Clair' (name+dtype, +driver rank from S4 diagnostics when present) via askClair insert-then-Run; report 'Recommended Next Steps' → one-click steering buttons carrying the Scorecard baseline; watcher report mtime re-emit (stable ref, seeded to avoid first-emit dupe). Verified: app 145 tests + tsc clean; serve watcher/conformance pass.
