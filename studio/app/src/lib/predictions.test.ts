@@ -24,9 +24,24 @@ test("detects the <target>_proba / <target>_actual schema", () => {
   expect(schema).toEqual({ probaCol: "Survived_proba", actualCol: "Survived_actual", target: "Survived" });
 });
 
+test("detects real-run OOF shape (oof_prob + y ground truth)", () => {
+  // output/oof_final.csv: PassengerId,y,oof_prob — y is truth, oof_prob is the score.
+  const schema = detectPredictionSchema({ PassengerId: [1, 2], y: [0, 1], oof_prob: [0.1, 0.9] });
+  expect(schema).toEqual({ probaCol: "oof_prob", actualCol: "y", target: "y" });
+});
+
+test("detects Probability + Survived label shape (case-insensitive)", () => {
+  const schema = detectPredictionSchema({ PassengerId: [1], Survived: [1], Probability: [0.8] });
+  expect(schema).toEqual({ probaCol: "Probability", actualCol: "Survived", target: "Survived" });
+});
+
 test("returns null when no proba/actual pair exists (regression / unlabeled)", () => {
-  expect(detectPredictionSchema({ x: [1, 2], y: [3, 4] })).toBeNull();
+  expect(detectPredictionSchema({ x: [1, 2], z: [3, 4] })).toBeNull();
   expect(detectPredictionSchema({ Survived_proba: [0.5] })).toBeNull(); // no _actual
+  // A bare submission with only a probability + predicted label but NO ground truth column
+  // is NOT scoreable — but note 'Survived' here IS treated as truth; a true no-truth file
+  // has neither a known truth name nor a *_actual, e.g. just an id + probability:
+  expect(detectPredictionSchema({ PassengerId: [1], Probability: [0.8] })).toBeNull();
   expect(detectPredictionSchema(undefined)).toBeNull();
 });
 

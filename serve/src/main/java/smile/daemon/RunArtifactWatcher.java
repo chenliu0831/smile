@@ -77,8 +77,11 @@ public final class RunArtifactWatcher {
             List.of("output/model_evaluation_report.md", "output/postprocess_results.json"), "report", "Evaluation Report"),
         new StageSpec("report", "Report",
             List.of("output/automl_report.md", "output/summary.md"), "report", "AutoML Report"),
+        // Predictions: prefer an OOF file (carries the ground-truth label column, so Predictions
+        // Studio can compute ROC/confusion) over the bare submission (test preds, no truth).
         new StageSpec("submission", "Submission",
-            List.of("final/submission.csv", "output/submission.csv"), "file", "submission.csv")
+            List.of("output/oof_final.csv", "final/submission.csv", "output/submission.csv", "output/oof_preds.csv"),
+            "file", "Predictions")
     );
 
     /** A file smaller than this is treated as a stub/placeholder and skipped in favor of a
@@ -355,7 +358,14 @@ public final class RunArtifactWatcher {
         return n.startsWith("correlation") || n.startsWith("distribution")
             || n.startsWith("categorical") || n.startsWith("time_series")
             || n.startsWith("numeric") || n.startsWith("cat_") || n.startsWith("hist_")
-            || n.startsWith("box_") || n.startsWith("chart") || n.contains("heatmap");
+            || n.startsWith("box_") || n.startsWith("chart") || n.contains("heatmap")
+            // automl postprocess/eval charts (matplotlib PNGs the agent saves to the cwd root).
+            // Native cockpit surfaces supersede the ones with structured data (ROC, confusion,
+            // feature importance, leaderboard); the rest (e.g. calibration) surface as images.
+            || n.contains("roc") || n.contains("confusion") || n.contains("calibration")
+            || n.contains("importance") || n.contains("leaderboard") || n.contains("reliability")
+            || n.contains("residual") || n.contains("shap") || n.contains("pr_curve")
+            || n.contains("precision_recall") || n.contains("learning_curve");
     }
 
     /** A human title from a chart filename, e.g. "correlation_heatmap.png" -> "Correlation Heatmap". */

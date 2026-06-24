@@ -76,12 +76,25 @@ export interface RocPoint {
 export function detectPredictionSchema(table: ColumnTable | undefined): PredictionSchema | null {
   if (!table) return null;
   const cols = Object.keys(table);
+  const lower = new Map(cols.map((c) => [c.toLowerCase(), c]));
+
+  // (1) The canonical convention: `<target>_proba` paired with `<target>_actual`.
   for (const probaCol of cols) {
-    const m = /^(.+)_proba$/.exec(probaCol);
+    const m = /^(.+)_proba$/i.exec(probaCol);
     if (!m) continue;
-    const target = m[1];
-    const actualCol = `${target}_actual`;
-    if (cols.includes(actualCol)) return { probaCol, actualCol, target };
+    const actualCol = cols.find((c) => c.toLowerCase() === `${m[1].toLowerCase()}_actual`);
+    if (actualCol) return { probaCol, actualCol, target: m[1] };
+  }
+
+  // (2) Common real-run shapes: a probability column + a ground-truth label column. Only a
+  // table WITH ground truth is scoreable (ROC/confusion need true labels), so we require
+  // both. Probability column candidates (in priority order) and truth-label candidates:
+  const probaNames = ["oof_prob", "oof_pred", "proba", "probability", "y_proba", "y_prob", "pred_proba", "score"];
+  const truthNames = ["y", "y_true", "actual", "target", "label", "survived", "ground_truth"];
+  const probaCol = probaNames.map((n) => lower.get(n)).find(Boolean);
+  const actualCol = truthNames.map((n) => lower.get(n)).find(Boolean);
+  if (probaCol && actualCol && probaCol !== actualCol) {
+    return { probaCol, actualCol, target: actualCol };
   }
   return null;
 }
