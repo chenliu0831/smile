@@ -24,10 +24,25 @@ export interface PredictionSchema {
   target: string;
 }
 
-/** One prediction row: positive-class probability and the true label. */
+/** One prediction row: positive-class probability, the true label, and the full source
+ * record (all columns) so the inspector can expand a row's features. */
 export interface PredictionRow {
   proba: number;
   actual: 0 | 1;
+  /** The row's original 0-based index in the prediction set. */
+  index: number;
+  /** Every column's value for this row (PassengerId, features, …) — for the row inspector. */
+  values: Record<string, number | string>;
+}
+
+/** The four confusion cells, as (predicted, actual) pairs. */
+export type CellKey = "tp" | "fp" | "tn" | "fn";
+
+/** Which confusion cell a row falls in at `threshold`. */
+export function cellOf(row: PredictionRow, threshold: number): CellKey {
+  const predPos = row.proba >= threshold;
+  if (row.actual === 1) return predPos ? "tp" : "fn";
+  return predPos ? "fp" : "tn";
 }
 
 /** The 2x2 confusion counts at a threshold (predicted positive iff proba >= threshold). */
@@ -79,6 +94,7 @@ export function detectPredictionSchema(table: ColumnTable | undefined): Predicti
 export function toPredictionRows(table: ColumnTable, schema: PredictionSchema): PredictionRow[] {
   const probas = table[schema.probaCol] ?? [];
   const actuals = table[schema.actualCol] ?? [];
+  const cols = Object.keys(table);
   const n = Math.min(probas.length, actuals.length);
   const rows: PredictionRow[] = [];
   for (let i = 0; i < n; i++) {
@@ -86,9 +102,48 @@ export function toPredictionRows(table: ColumnTable, schema: PredictionSchema): 
     const actual = Number(actuals[i]);
     if (!Number.isFinite(proba)) continue;
     if (actual !== 0 && actual !== 1) continue;
-    rows.push({ proba, actual: actual as 0 | 1 });
+    const values: Record<string, number | string> = {};
+    for (const c of cols) values[c] = table[c][i];
+    rows.push({ proba, actual: actual as 0 | 1, index: i, values });
   }
   return rows;
+}
+
+/** The rows falling in a given confusion cell at `threshold` (for the cell→rows drill-down). */
+export function rowsInCell(rows: PredictionRow[], cell: CellKey, threshold: number): PredictionRow[] {
+  return rows.filter((r) => cellOf(r, threshold) === cell);
+}
+
+/** One histogram bin: the probability sub-range and the per-class counts within it. */
+export interface SeparationBin {
+  /** Bin lower edge (inclusive), e.g. 0.0, 0.1, … */
+  lo: number;
+  /** Bin upper edge (exclusive, except the last bin which includes 1.0). */
+  hi: number;
+  /** Count of true-negative-class (actual=0) rows whose proba falls in this bin. */
+  neg: number;
+  /** Count of true-positive-class (actual=1) rows whose proba falls in this bin. */
+  pos: number;
+}
+
+/**
+ * Probability-separation histogram by true class: bins predicted probabilities into
+ * `bins` equal-width buckets over [0,1] and counts actual-0 vs actual-1 rows in each. Lets
+ * the user see how cleanly the model separates the classes. `bins` defaults to 10.
+ */
+export function separationHistogram(rows: PredictionRow[], bins = 10): SeparationBin[] {
+  const out: SeparationBin[] = [];
+  for (let b = 0; b < bins; b++) {
+    out.push({ lo: b / bins, hi: (b + 1) / bins, neg: 0, pos: 0 });
+  }
+  for (const r of rows) {
+    // Clamp to the last bin so proba===1 lands in [.., 1.0].
+    const idx = Math.min(bins - 1, Math.floor(r.proba * bins));
+    if (idx < 0) continue;
+    if (r.actual === 1) out[idx].pos++;
+    else out[idx].neg++;
+  }
+  return out;
 }
 
 /** Confusion counts at `threshold`: predicted positive iff proba >= threshold. */

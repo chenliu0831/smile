@@ -10,12 +10,14 @@ End-to-end: clicking a confusion-matrix cell (ECharts per-element click) lists t
 
 ## Acceptance criteria
 
-- [ ] Clicking a confusion-matrix cell shows the list of rows in that cell, consistent with the current threshold.
-- [ ] Clicking a (misclassified) row expands its feature values inline.
-- [ ] A probability-separation histogram by true class renders from the prediction rows.
-- [ ] Cell→list and the histogram recompute correctly when the threshold changes.
-- [ ] A replay-fixture UAT asserts the cell-click row list and the row-expansion behavior.
+- [x] Clicking a confusion-matrix cell shows the list of rows in that cell, consistent with the current threshold.
+- [x] Clicking a (misclassified) row expands its feature values inline.
+- [x] A probability-separation histogram by true class renders from the prediction rows.
+- [x] Cell→list and the histogram recompute correctly when the threshold changes.
+- [x] A replay-fixture UAT asserts the cell-click row list and the row-expansion behavior.
 
 ## Blocked by
 
 - S2 — Predictions Studio (core)
+
+**Status: complete.** Confusion cell→row list (rowsInCell), row→feature expansion (full source record on each PredictionRow), probability-separation histogram by class (separationHistogram). All client-side over the rows S2 fetched once; threshold change invalidates the selection. Verified: app 130 tests + tsc clean; 6 new predictions lib tests + drill-down UAT.

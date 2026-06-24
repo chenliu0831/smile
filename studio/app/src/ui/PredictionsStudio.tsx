@@ -16,6 +16,8 @@ import type { Artifact } from "../daemon/protocol";
 import { useRunContext } from "../store/RunContext";
 import {
   type ColumnTable,
+  type CellKey,
+  type PredictionRow,
   detectPredictionSchema,
   toPredictionRows,
   confusionAt,
@@ -23,6 +25,8 @@ import {
   rocCurve,
   aucFrom,
   thresholdMaximisingF1,
+  rowsInCell,
+  separationHistogram,
 } from "../lib/predictions";
 
 const AXIS = { axisLine: { lineStyle: { color: "#2a3340" } }, axisLabel: { color: "#8b98a8" } };
@@ -81,6 +85,21 @@ export function PredictionsStudio({ artifact }: { artifact: Artifact }) {
 
   const confusion = useMemo(() => confusionAt(rows, threshold), [rows, threshold]);
   const metrics = useMemo(() => metricsFrom(confusion), [confusion]);
+
+  // Drill-down: the confusion cell the user clicked, and the rows in it at this threshold.
+  const [selectedCell, setSelectedCell] = useState<CellKey | null>(null);
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const cellRows = useMemo(
+    () => (selectedCell ? rowsInCell(rows, selectedCell, threshold) : []),
+    [rows, selectedCell, threshold],
+  );
+  const histogram = useMemo(() => separationHistogram(rows, 10), [rows]);
+
+  // Moving the threshold invalidates the current cell selection (membership changes).
+  const selectCell = (cell: CellKey) => {
+    setSelectedCell(cell);
+    setExpandedRow(null);
+  };
 
   // The ROC operating point at the current threshold (for the curve marker).
   const operating = useMemo(() => {
@@ -149,6 +168,41 @@ export function PredictionsStudio({ artifact }: { artifact: Artifact }) {
     }],
   };
 
+  // Map a clicked heatmap point [x=pred, y(0→act1,1→act0)] back to a confusion cell.
+  const CELL_AT: Record<string, CellKey> = {
+    "1,0": "tp", "0,0": "fn", // y=0 → actual 1
+    "1,1": "fp", "0,1": "tn", // y=1 → actual 0
+  };
+  const onConfusionEvents = {
+    click: (p: { data?: number[] }) => {
+      if (!p.data) return;
+      const key = CELL_AT[`${p.data[0]},${p.data[1]}`];
+      if (key) selectCell(key);
+    },
+  };
+
+  // Probability-separation histogram: actual-0 vs actual-1 counts per probability bin.
+  const histOption = {
+    ...BASE,
+    title: { ...BASE.title, text: "Probability separation by class" },
+    grid: { left: 48, right: 16, top: 40, bottom: 36 },
+    legend: { top: 16, right: 8, textStyle: { color: "#8b98a8" }, data: ["actual 0", "actual 1"] },
+    tooltip: { trigger: "axis" as const },
+    xAxis: { type: "category", data: histogram.map((b) => b.lo.toFixed(1)), name: "proba", ...AXIS },
+    yAxis: { type: "value", name: "count", ...AXIS },
+    series: [
+      { name: "actual 0", type: "bar", stack: "c", itemStyle: { color: "#5a6b7d" }, data: histogram.map((b) => b.neg) },
+      { name: "actual 1", type: "bar", stack: "c", itemStyle: { color: "#4ea8de" }, data: histogram.map((b) => b.pos) },
+    ],
+  };
+
+  const CELL_LABEL: Record<CellKey, string> = {
+    tp: "true positives", fp: "false positives", tn: "true negatives", fn: "false negatives",
+  };
+  // Feature columns to show in the row inspector (everything except the proba/actual pair).
+  const featureCols = (r: PredictionRow) =>
+    Object.keys(r.values).filter((c) => c !== schema.probaCol && c !== schema.actualCol);
+
   return (
     <div className="predictions-studio">
       <div className="predictions-controls">
@@ -156,7 +210,7 @@ export function PredictionsStudio({ artifact }: { artifact: Artifact }) {
           Threshold <b>{threshold.toFixed(2)}</b>
           <input
             type="range" min={0} max={1} step={0.01} value={threshold}
-            onChange={(e) => setThreshold(Number(e.target.value))}
+            onChange={(e) => { setThreshold(Number(e.target.value)); setExpandedRow(null); }}
           />
         </label>
         <button
@@ -178,9 +232,41 @@ export function PredictionsStudio({ artifact }: { artifact: Artifact }) {
       </div>
 
       <div className="predictions-charts">
-        <ReactECharts option={confusionOption} style={{ height: 260, width: "50%" }} notMerge theme="dark" />
+        <ReactECharts option={confusionOption} onEvents={onConfusionEvents} style={{ height: 260, width: "50%" }} notMerge theme="dark" />
         <ReactECharts option={rocOption} style={{ height: 260, width: "50%" }} notMerge theme="dark" />
       </div>
+
+      <ReactECharts option={histOption} style={{ height: 220, width: "100%" }} notMerge theme="dark" />
+
+      {selectedCell && (
+        <div className="predictions-drill" data-testid="predictions-drill">
+          <div className="predictions-drill-head">
+            {cellRows.length} {CELL_LABEL[selectedCell]} @ {threshold.toFixed(2)}
+            <button type="button" className="predictions-drill-close" onClick={() => setSelectedCell(null)}>✕</button>
+          </div>
+          <ul className="predictions-rowlist">
+            {cellRows.slice(0, 50).map((r) => (
+              <li key={r.index}>
+                <button
+                  type="button"
+                  className="predictions-row"
+                  onClick={() => setExpandedRow(expandedRow === r.index ? null : r.index)}
+                >
+                  row {r.index} · proba {r.proba.toFixed(3)} · actual {r.actual}
+                </button>
+                {expandedRow === r.index && (
+                  <dl className="predictions-features" data-testid="predictions-features">
+                    {featureCols(r).map((c) => (
+                      <span key={c}><dt>{c}</dt><dd>{String(r.values[c])}</dd></span>
+                    ))}
+                  </dl>
+                )}
+              </li>
+            ))}
+            {cellRows.length > 50 && <li className="predictions-more">… {cellRows.length - 50} more</li>}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

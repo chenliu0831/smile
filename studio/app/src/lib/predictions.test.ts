@@ -6,6 +6,9 @@ import {
   rocCurve,
   aucFrom,
   thresholdMaximisingF1,
+  cellOf,
+  rowsInCell,
+  separationHistogram,
   type ColumnTable,
 } from "./predictions";
 
@@ -34,10 +37,10 @@ test("builds prediction rows and tolerates malformed values (crash-safety)", () 
   };
   const schema = detectPredictionSchema(messy)!;
   const rows = toPredictionRows(messy, schema);
-  // Row 1 (NaN proba) and row 2 (label 2) are skipped; rows 0 and 3 survive.
-  expect(rows).toEqual([
-    { proba: 0.7, actual: 1 },
-    { proba: 0.9, actual: 0 },
+  // Row 1 (NaN proba) and row 2 (label 2) are skipped; rows 0 and 3 survive (orig indices 0,3).
+  expect(rows.map((r) => ({ proba: r.proba, actual: r.actual, index: r.index }))).toEqual([
+    { proba: 0.7, actual: 1, index: 0 },
+    { proba: 0.9, actual: 0, index: 3 },
   ]);
   expect(rows.every((r) => Number.isFinite(r.proba))).toBe(true);
 });
@@ -81,6 +84,41 @@ test("ROC curve is empty when one class is absent (undefined AUC)", () => {
   const oneClass: ColumnTable = { t_proba: [0.4, 0.6], t_actual: [1, 1] };
   const rows = toPredictionRows(oneClass, detectPredictionSchema(oneClass)!);
   expect(rocCurve(rows)).toEqual([]);
+});
+
+test("toPredictionRows carries the full source record for the row inspector", () => {
+  const rows = toPredictionRows(table, detectPredictionSchema(table)!);
+  expect(rows[0].values).toEqual({ PassengerId: 1, Survived_proba: 0.9, Survived_actual: 1 });
+});
+
+test("cellOf / rowsInCell classify rows into confusion cells at the threshold", () => {
+  const rows = toPredictionRows(table, detectPredictionSchema(table)!);
+  // At 0.5: tp = ids with proba>=.5 & actual=1 (0.9,0.8) ; fp = proba>=.5 & actual=0 (0.6)
+  expect(rowsInCell(rows, "tp", 0.5).map((r) => r.values.PassengerId)).toEqual([1, 2]);
+  expect(rowsInCell(rows, "fp", 0.5).map((r) => r.values.PassengerId)).toEqual([3]);
+  expect(rowsInCell(rows, "fn", 0.5).map((r) => r.values.PassengerId)).toEqual([4]);
+  expect(rowsInCell(rows, "tn", 0.5).map((r) => r.values.PassengerId)).toEqual([5, 6]);
+  // Raising the threshold to 0.85 moves id2 (0.8) from tp into fn.
+  expect(cellOf(rows.find((r) => r.values.PassengerId === 2)!, 0.85)).toBe("fn");
+});
+
+test("separationHistogram bins probabilities by true class", () => {
+  const rows = toPredictionRows(table, detectPredictionSchema(table)!);
+  const hist = separationHistogram(rows, 10);
+  expect(hist).toHaveLength(10);
+  // Per-class totals are conserved across the bins (3 positives, 3 negatives).
+  expect(hist.reduce((s, b) => s + b.pos, 0)).toBe(3);
+  expect(hist.reduce((s, b) => s + b.neg, 0)).toBe(3);
+  // proba 0.9 (actual 1) lands in the last bin [0.9,1.0].
+  expect(hist[9].pos).toBe(1);
+});
+
+test("separationHistogram puts proba===1.0 in the last bin (no overflow)", () => {
+  const t: ColumnTable = { t_proba: [1.0, 0.0], t_actual: [1, 0] };
+  const rows = toPredictionRows(t, detectPredictionSchema(t)!);
+  const hist = separationHistogram(rows, 10);
+  expect(hist[9].pos).toBe(1);
+  expect(hist[0].neg).toBe(1);
 });
 
 test("thresholdMaximisingF1 picks the F1-optimal sweep point", () => {
