@@ -19,5 +19,10 @@ This **restores ADR-0002 and ADR-0007**, both of which already lock Arrow as the
 
 ## Consequences
 
-- ECharts gains a thin `tableFromIPC` → arrays decode step for chart data; negligible for small projections.
 - If a Perspective-on-Arrow bug surfaces in practice, we diagnose it on its merits — the lifecycle fix and Arrow's explicit typing remove the two reasons the original detour existed.
+
+## Implementation note (S9)
+
+In implementation the scope narrowed to the **bulk-tabular** boundary. The **Data Grid** now ingests Arrow IPC directly into Perspective (the schema+JSON detour is removed). But `/data/{ref}`, which serves only small CHART projections (ROC points, a 5-row importance array, ~179 prediction rows), stays **column-JSON**: ECharts consumes in-memory JS arrays, never bulk tabular, so Arrow's typing/bulk advantages don't apply and column-JSON is already exactly ECharts' shape. So the rule is: **Arrow IPC for bulk tabular (the grid); column-JSON for lightweight viz projections (charts).** This is the deliberate escape hatch the decision allowed.
+
+Verification limit: jsdom has no WebAssembly, so the test suite cannot confirm Perspective's WASM ingests the Arrow correctly — that is a manual/real-browser check (the lifecycle race behind the historical crash is fixed and format-independent).

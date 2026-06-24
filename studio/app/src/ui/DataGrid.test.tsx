@@ -47,9 +47,22 @@ test("toPerspectiveData maps columns+rows to an explicit schema with safe JS val
   expect(rows[1].Notes).toBeNull();
 });
 
-// The crux of the "null pointer passed to rust" fix: DuckDB BIGINT → Arrow Int64 → JS
-// BigInt, which Perspective's WASM rejects. toPerspectiveData must declare such columns
-// "float" and emit plain numbers (no BigInt) so Perspective ingests them reliably.
+// ADR-0012: the grid now ingests Arrow IPC directly (toArrowIPC), so the Int64 → BigInt
+// concern is handled by Arrow's explicit 64-bit schema rather than a JSON downcast — Int64
+// columns round-trip through Arrow IPC with their values intact and no i32 inference.
+test("toArrowIPC round-trips Int64 columns without overflow (Arrow-direct grid ingest)", () => {
+  const table = arrow.tableFromArrays({
+    PassengerId: BigInt64Array.from([1n, 9007199254740993n, 3n]),
+    Fare: Float64Array.from([7.25, 71.28, 8.05]),
+  });
+  const decoded = tableFromIPC(toArrowIPC(table));
+  // The 64-bit id survives as Int64 (BigInt) — no i32 inference, no overflow.
+  expect(decoded.getChild("PassengerId")?.get(1)).toBe(9007199254740993n);
+  expect(decoded.getChild("Fare")?.get(0)).toBeCloseTo(7.25);
+});
+
+// Retained: toPerspectiveData (the prior JSON-ingest path) is still exported + unit-tested,
+// though the grid no longer uses it — kept for any consumer that needs a JSON projection.
 test("toPerspectiveData downcasts Arrow Int64 (BigInt) columns to float numbers", () => {
   const table = arrow.tableFromArrays({
     PassengerId: BigInt64Array.from([1n, 2n, 3n].map(BigInt)),

@@ -19,7 +19,7 @@ import { useEffect, useRef, useState } from "react";
 // the WASM off the import path so the pure transform layer (./dataFrame) stays testable.
 import type { HTMLPerspectiveViewerElement } from "@finos/perspective-viewer";
 
-import { toPerspectiveData, type DataGridData } from "../lib/dataFrame";
+import { toArrowIPC, type DataGridData } from "../lib/dataFrame";
 
 export type { DataGridData, DataGridColumns } from "../lib/dataFrame";
 export { toArrowIPC, columnsToArrow, toPerspectiveData } from "../lib/dataFrame";
@@ -109,17 +109,15 @@ export function DataGrid({ data, height = 360, settings = false, plugin = "Datag
         const perspective = await loadPerspective();
         if (stale() || !ref.current) return;
 
-        // Ingest via an explicit schema + JSON rows rather than re-encoded Arrow IPC:
-        // Perspective's WASM Arrow reader chokes on DuckDB Int64 columns ("null pointer
-        // passed to rust"), and its inference would pick i32 and overflow large ids.
-        // dataFrame.toPerspectiveData maps 64-bit ints → float and BigInt → number.
-        const { schema, rows } = toPerspectiveData(data);
+        // Ingest Arrow IPC directly — the single tabular wire format (ADR-0012). Arrow's
+        // explicit schema carries DuckDB Int64 as a real 64-bit type, so Perspective no
+        // longer infers i32 and overflows large ids (the JSON-ingest hazard the prior
+        // schema+JSON detour worked around). The "null pointer passed to rust" crash was a
+        // viewer lifecycle race (fixed below: serialized op-chain + generation gate), not the
+        // Arrow path — so feeding Arrow is safe given that fix.
+        const ipc = toArrowIPC(data);
         if (!workerRef.current) workerRef.current = await perspective.worker();
-        // Create the table from the schema first (locks column types), then load rows.
-        // A `{col: type}` object is Perspective's documented "schema" table input, but the
-        // shipped .d.ts omits that overload — cast through unknown to the data-input type.
-        table = await workerRef.current.table(schema as unknown as Record<string, unknown[]>);
-        if (rows.length) await table.update(rows);
+        table = await workerRef.current.table(ipc.slice().buffer as unknown as Record<string, unknown[]>);
         if (stale() || !ref.current) { await table.delete?.().catch(() => {}); return; }
 
         // Swap the table into the persistent viewer. We do NOT delete the viewer here — only
