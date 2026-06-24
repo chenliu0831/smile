@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+#
+# One-command dev launcher for Smile Studio (ADR-0015).
+#
+#   smile-studio [--rebuild]
+#
+# A thin, symlink-safe wrapper: it resolves its OWN real location (following a PATH symlink
+# such as /usr/local/bin/smile-studio) back to this file in the repo, derives the repo root,
+# and delegates to studio/run.sh — which does the actual work (build daemon jar if stale,
+# npm install if needed, launch `tauri dev`). Install it onto your PATH once with
+# bin/install-dev-launcher.sh, then run `smile-studio` from ANY directory.
+#
+# Two invariants this wrapper preserves (see ADR-0015):
+#   1. Workspace = the directory you launched from. run.sh captures $PWD as the agent's
+#      working dir (SMILE_STUDIO_LAUNCH_DIR). We therefore do NOT `cd` before delegating —
+#      `exec` keeps the caller's cwd, so launching from your dataset dir makes that the
+#      agent workspace.
+#   2. Symlink-safety. When invoked via a /usr/local/bin symlink, BASH_SOURCE is the symlink;
+#      we resolve it to the real file (macOS has no `readlink -f`, so we walk the links by
+#      hand) before locating the repo.
+set -euo pipefail
+
+# Resolve this script's real path, following symlinks (portable: macOS readlink lacks -f).
+src="${BASH_SOURCE[0]}"
+while [[ -h "$src" ]]; do
+  dir="$(cd -P "$(dirname "$src")" && pwd)"
+  link="$(readlink "$src")"
+  # Absolute link → use as-is; relative link → resolve against the link's own dir.
+  case "$link" in
+    /*) src="$link" ;;
+    *)  src="$dir/$link" ;;
+  esac
+done
+BIN_DIR="$(cd -P "$(dirname "$src")" && pwd)"   # <repo>/bin
+REPO_ROOT="$(cd "$BIN_DIR/.." && pwd)"
+RUN_SH="$REPO_ROOT/studio/run.sh"
+
+if [[ ! -x "$RUN_SH" ]]; then
+  echo "smile-studio: cannot find studio/run.sh at $RUN_SH" >&2
+  echo "  (this launcher must live in <repo>/bin and the repo must be intact)" >&2
+  exit 1
+fi
+
+# Delegate WITHOUT changing cwd, so run.sh records the caller's directory as the workspace.
+# `exec` replaces this process; all args (e.g. --rebuild) pass straight through.
+exec "$RUN_SH" "$@"
