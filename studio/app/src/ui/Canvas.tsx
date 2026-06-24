@@ -5,6 +5,7 @@
 import { useEffect, useState } from "react";
 import type { Artifact } from "../daemon/protocol";
 import type { ProblemType } from "../lib/leaderboard";
+import type { ParamsByModel } from "../lib/params";
 import { Markdown } from "./Markdown";
 import { Leaderboard } from "./Leaderboard";
 import { Chart } from "./Chart";
@@ -12,8 +13,8 @@ import { PredictionsStudio, isPredictionsArtifact } from "./PredictionsStudio";
 import { PermImportanceChart } from "./PermImportanceChart";
 import { ErrorBoundary } from "./ErrorBoundary";
 
-function ArtifactView({ artifact, problemType }: { artifact: Artifact; problemType?: ProblemType }) {
-  if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} problemType={problemType} />;
+function ArtifactView({ artifact, problemType, paramsByModel }: { artifact: Artifact; problemType?: ProblemType; paramsByModel?: ParamsByModel }) {
+  if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} problemType={problemType} paramsByModel={paramsByModel} />;
   if (artifact.kind === "report" && artifact.body) return <Markdown source={artifact.body} />;
   if (artifact.kind === "chart" && artifact.viz) return <Chart spec={artifact.viz} />;
   // Driver Diagnostics: permutation importance carried inline in `meta` (ADR-0011).
@@ -37,7 +38,15 @@ function ArtifactView({ artifact, problemType }: { artifact: Artifact; problemTy
   return <div className="canvas-empty">No preview for this artifact.</div>;
 }
 
-export function Canvas({ artifacts, problemType }: { artifacts: Artifact[]; problemType?: ProblemType }) {
+/** Artifacts consumed as companion/chrome data, not shown as their own canvas tab:
+ * the metrics Scorecard (own strip) and the params sidecar (joined into the Leaderboard). */
+function isCompanionArtifact(a: Artifact): boolean {
+  return a.kind === "metrics";
+}
+
+export function Canvas({ artifacts: allArtifacts, problemType, paramsByModel }: { artifacts: Artifact[]; problemType?: ProblemType; paramsByModel?: ParamsByModel }) {
+  // Companion artifacts (metrics/params) feed other surfaces; never render as a canvas tab.
+  const artifacts = allArtifacts.filter((a) => !isCompanionArtifact(a));
   const [activeRef, setActiveRef] = useState<string | null>(null);
 
   // Follow the latest artifact as the run streams, unless the user has picked one.
@@ -67,7 +76,7 @@ export function Canvas({ artifacts, problemType }: { artifacts: Artifact[]; prob
           </div>
           {active && (
             <ErrorBoundary label={`“${active.title}”`} resetKey={active.ref}>
-              <ArtifactView artifact={active} problemType={problemType} />
+              <ArtifactView artifact={active} problemType={problemType} paramsByModel={paramsByModel} />
             </ErrorBoundary>
           )}
         </>

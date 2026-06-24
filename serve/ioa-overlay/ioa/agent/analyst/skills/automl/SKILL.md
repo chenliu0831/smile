@@ -383,3 +383,14 @@ The final deliverable is:
    ```
 
    This reads `output/checkpoints/state.json` and `output/automl_report.md` and writes the headline numbers (`task_type`, `primary_metric`, OOF/test scores, `rows`, `cv`, `ensemble_method`) as JSON. Run it after the report is written so all scores are recorded; never hand-author this file.
+8. `output/best_params.json` — the tuned hyperparameters per model, for the Leaderboard drill-down. Write a JSON object keyed by the model's SHORT name as used in your candidate scripts (`xgb`, `lgbm`, `rf`, `logreg`, `mlp` — NOT library names like `xgboost`), each value an object with `params` (the tuned hyperparameters from `solution_v*_tuned.py`) and, when known, `default_params` (the pre-tuning defaults so the UI can show a delta). Example:
+
+   ```json
+   {
+     "xgb": { "params": { "n_estimators": 406, "max_depth": 5, "learning_rate": 0.094 },
+              "default_params": { "n_estimators": 100, "max_depth": 6, "learning_rate": 0.3 } },
+     "lgbm": { "params": { "num_leaves": 31, "learning_rate": 0.05 } }
+   }
+   ```
+
+   Include only models you actually tuned. Omit the file entirely if no hyperparameter tuning ran.

@@ -137,6 +137,32 @@ public class RunArtifactWatcherTest {
         watcher.stop();
     }
 
+    @Test
+    public void bestParamsBecomesAMetricsCompanionArtifact(@TempDir Path dir) throws Exception {
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.RunStarted), 2000);
+
+        Files.createDirectories(dir.resolve("output"));
+        Files.writeString(dir.resolve("output/best_params.json"),
+                "{\"xgb\":{\"params\":{\"max_depth\":5}}}");
+
+        // The params companion uses kind "metrics" with ref "params" (joined into the
+        // Leaderboard, not its own canvas tab), carrying the JSON inline in meta.
+        waitFor(() -> msgs.stream().anyMatch(m ->
+                m instanceof DaemonMessage.ArtifactMsg a && "params".equals(a.artifact().ref())), 4000);
+        var art = msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.ref().equals("params")).findFirst().orElseThrow();
+        assertEquals("metrics", art.kind());
+        assertNotNull(art.meta());
+        assertEquals(5, art.meta().get("xgb").get("params").get("max_depth").asInt());
+
+        watcher.stop();
+    }
+
     private interface Cond { boolean ok(); }
 
     private void waitFor(Cond c, long timeoutMs) throws InterruptedException {

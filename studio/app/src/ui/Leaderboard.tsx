@@ -6,7 +6,7 @@
  * A projection of the agent's `candidate_scores.md` / `summary.md` — not a backend table.
  * All ranking math is pure (../lib/leaderboard); this component holds only the sort key.
  */
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   parseLeaderboard,
   defaultMetric,
@@ -15,6 +15,7 @@ import {
   type ProblemType,
   type SortKey,
 } from "../lib/leaderboard";
+import { type ParamsByModel, paramsForModel, toPythonDict, paramDeltas } from "../lib/params";
 
 const TYPE_COLOR: Record<string, string> = {
   ensemble: "var(--gold)",
@@ -22,13 +23,24 @@ const TYPE_COLOR: Record<string, string> = {
   default: "var(--text-dim)",
 };
 
-export function Leaderboard({ markdown, problemType = "binary" }: { markdown: string; problemType?: ProblemType }) {
+export function Leaderboard({
+  markdown,
+  problemType = "binary",
+  paramsByModel,
+}: {
+  markdown: string;
+  problemType?: ProblemType;
+  /** Tuned hyperparameters by model (S7) — enables per-row drill-down when present. */
+  paramsByModel?: ParamsByModel;
+}) {
   // problemType defaults to binary; S5 threads the run's real task_type in so the metric
   // label/direction is correct for regression/multiclass.
   const spec = defaultMetric(problemType);
   const board = useMemo(() => parseLeaderboard(markdown, spec), [markdown, spec.metric, spec.higherIsBetter]);
 
   const [sortKey, setSortKey] = useState<SortKey>("score");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
   const rows = useMemo(
     () => sortCandidates(board.rows, sortKey, board.higherIsBetter),
     [board.rows, sortKey, board.higherIsBetter],
@@ -71,30 +83,83 @@ export function Leaderboard({ markdown, problemType = "binary" }: { markdown: st
             const width = Number.isFinite(r.score) ? Math.max(2, (r.score / maxScore) * 100) : 0;
             // ±std whisker width relative to the bar scale (only when std is finite).
             const whisker = Number.isFinite(r.std as number) ? ((r.std as number) / maxScore) * 100 : null;
+            const mp = paramsByModel ? paramsForModel(paramsByModel, r.name) : undefined;
+            const isOpen = expanded === r.name;
             return (
-              <tr key={r.name} className={i === 0 ? "best" : ""}>
-                <td className="rank">{i === 0 ? <span className="medal">★</span> : i + 1}</td>
-                <td>{r.name}</td>
-                <td className="score">
-                  <div className="lb-bar-cell">
-                    <span
-                      className="lb-bar"
-                      style={{ width: `${width}%`, background: TYPE_COLOR[r.modelType] }}
-                    >
-                      {whisker != null && (
-                        <span className="lb-whisker" style={{ width: `${Math.min(whisker, width)}%` }} />
-                      )}
-                    </span>
-                    <span className="lb-score-num">{Number.isFinite(r.score) ? r.score.toFixed(4) : "—"}</span>
-                  </div>
-                </td>
-                <td className="score">{Number.isFinite(r.std as number) ? `±${(r.std as number).toFixed(3)}` : "—"}</td>
-                <td style={{ color: "var(--text-dim)" }}>{r.params ?? "—"}</td>
-                <td className="score">{r.runtimeSec != null ? `${r.runtimeSec}s` : "—"}</td>
-                <td>
-                  <span className="lb-type" style={{ color: TYPE_COLOR[r.modelType] }}>{r.modelType}</span>
-                </td>
-              </tr>
+              <Fragment key={r.name}>
+                <tr className={i === 0 ? "best" : ""}>
+                  <td className="rank">{i === 0 ? <span className="medal">★</span> : i + 1}</td>
+                  <td>
+                    {mp ? (
+                      <button
+                        type="button"
+                        className="lb-expand"
+                        aria-expanded={isOpen}
+                        onClick={() => setExpanded(isOpen ? null : r.name)}
+                      >
+                        {isOpen ? "▾" : "▸"} {r.name}
+                      </button>
+                    ) : (
+                      r.name
+                    )}
+                  </td>
+                  <td className="score">
+                    <div className="lb-bar-cell">
+                      <span
+                        className="lb-bar"
+                        style={{ width: `${width}%`, background: TYPE_COLOR[r.modelType] }}
+                      >
+                        {whisker != null && (
+                          <span className="lb-whisker" style={{ width: `${Math.min(whisker, width)}%` }} />
+                        )}
+                      </span>
+                      <span className="lb-score-num">{Number.isFinite(r.score) ? r.score.toFixed(4) : "—"}</span>
+                    </div>
+                  </td>
+                  <td className="score">{Number.isFinite(r.std as number) ? `±${(r.std as number).toFixed(3)}` : "—"}</td>
+                  <td style={{ color: "var(--text-dim)" }}>{r.params ?? "—"}</td>
+                  <td className="score">{r.runtimeSec != null ? `${r.runtimeSec}s` : "—"}</td>
+                  <td>
+                    <span className="lb-type" style={{ color: TYPE_COLOR[r.modelType] }}>{r.modelType}</span>
+                  </td>
+                </tr>
+                {isOpen && mp && (
+                  <tr className="lb-params-row" data-testid="lb-params">
+                    <td colSpan={7}>
+                      <div className="lb-params">
+                        <div className="lb-params-head">
+                          <span>Tuned hyperparameters</span>
+                          <button
+                            type="button"
+                            className="lb-copy"
+                            onClick={() => {
+                              const dict = toPythonDict(mp.params);
+                              void navigator.clipboard?.writeText(dict);
+                              setCopied(r.name);
+                            }}
+                          >
+                            {copied === r.name ? "copied ✓" : "copy as Python dict"}
+                          </button>
+                        </div>
+                        <table className="lb-params-table">
+                          <thead>
+                            <tr><th>param</th><th>tuned</th>{mp.defaults && <th>default</th>}</tr>
+                          </thead>
+                          <tbody>
+                            {paramDeltas(mp).map((d) => (
+                              <tr key={d.key} className={d.changed ? "lb-param-changed" : ""}>
+                                <td>{d.key}</td>
+                                <td>{String(d.tuned)}</td>
+                                {mp.defaults && <td>{d.default !== undefined ? String(d.default) : "—"}</td>}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             );
           })}
         </tbody>

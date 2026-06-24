@@ -22,8 +22,9 @@ import { Timeline } from "./Timeline";
 import { Canvas } from "./Canvas";
 import { SqlConsole } from "./SqlConsole";
 import { Scorecard } from "./Scorecard";
-import { selectHasDataset, selectLeaderboard, selectMetrics } from "../store/selectors";
+import { selectHasDataset, selectLeaderboard, selectMetrics, selectParams } from "../store/selectors";
 import { parseMetrics } from "../lib/metrics";
+import { parseParams } from "../lib/params";
 
 function WorkspaceInner() {
   const c = useRunContext();
@@ -198,7 +199,10 @@ function CanvasRegion({ view, injectedSql }: { view: CanvasView; injectedSql?: {
       // labels are correct for regression/multiclass — no longer hard-coded to binary (S5).
       const metricsArtifact = selectMetrics(state);
       const problemType = metricsArtifact ? parseMetrics(metricsArtifact.meta)?.taskType : undefined;
-      return <Canvas artifacts={lb ? [lb] : artifacts} problemType={problemType} />;
+      // Tuned-hyperparameter companion (S7), joined into the rows for the drill-down.
+      const paramsArtifact = selectParams(state);
+      const paramsByModel = paramsArtifact ? parseParams(paramsArtifact.meta) : undefined;
+      return <Canvas artifacts={lb ? [lb] : artifacts} problemType={problemType} paramsByModel={paramsByModel} />;
     }
     case "overview":
     default:

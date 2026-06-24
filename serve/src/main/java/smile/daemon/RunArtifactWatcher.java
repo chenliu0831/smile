@@ -66,10 +66,13 @@ public final class RunArtifactWatcher {
      * JSON rides the artifact's {@code meta} and the consumer parses it. */
     private record JsonSidecar(String relPath, String ref, String kind, String title) {}
 
-    /** Skill-emitted public JSON sidecars the cockpit consumes (ADR-0014). */
+    /** Skill-emitted public JSON sidecars the cockpit consumes (ADR-0014). The diagnostics
+     * and metrics refs drive dedicated surfaces; the params companion (kind "metrics", ref
+     * "params") joins into the Leaderboard rather than its own canvas tab. */
     private static final List<JsonSidecar> JSON_SIDECARS = List.of(
         new JsonSidecar("output/postprocess_results.json", "diagnostics", "diagnostics", "Driver Diagnostics"),
-        new JsonSidecar("output/final_metrics.json", "metrics", "metrics", "Run Scorecard")
+        new JsonSidecar("output/final_metrics.json", "metrics", "metrics", "Run Scorecard"),
+        new JsonSidecar("output/best_params.json", "params", "metrics", "Tuned Hyperparameters")
     );
 
     private static final ObjectMapper JSON = new ObjectMapper();

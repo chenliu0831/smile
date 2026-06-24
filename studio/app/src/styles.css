@@ -214,6 +214,18 @@ button {
 .lb-score-num { font-family: var(--mono); color: var(--text); }
 .lb-type { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
 .lb-verdict { margin-top: 14px; padding: 10px 14px; border: 1px solid var(--border); border-left: 3px solid var(--gold); border-radius: 8px; background: var(--bg-elev); font-size: 13px; color: var(--text); }
+.lb-expand { background: none; border: none; color: var(--text); cursor: pointer; font-family: inherit; font-size: inherit; padding: 0; text-align: left; }
+.lb-expand:hover { color: var(--accent); }
+.lb-params-row td { background: var(--bg-elev-2); }
+.lb-params { padding: 4px 8px 8px; }
+.lb-params-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 6px; }
+.lb-copy { font-size: 11px; color: var(--text-dim); background: var(--bg-elev); border: 1px solid var(--border); border-radius: 5px; padding: 2px 8px; cursor: pointer; }
+.lb-copy:hover { color: var(--text); border-color: var(--accent); }
+.lb-params-table { width: auto; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+.lb-params-table th { text-align: left; color: var(--text-dim); font-weight: 500; padding: 2px 16px 2px 0; text-transform: none; letter-spacing: 0; }
+.lb-params-table td { padding: 2px 16px 2px 0; border: none; color: var(--text-dim); }
+.lb-params-table tr.lb-param-changed td { color: var(--text); }
+.lb-params-table tr.lb-param-changed td:nth-child(2) { color: var(--accent); }
 
 /* ---- Agent stream ---- */
 .stream-body { flex: 1; overflow: auto; padding: 12px 14px; }

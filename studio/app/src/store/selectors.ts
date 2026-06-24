@@ -39,7 +39,12 @@ export const selectHasDataset = (
 export const selectLeaderboard = (session: RunState): Artifact | undefined =>
   Object.values(session.artifacts).find((a) => a.kind === "leaderboard");
 
-/** The metrics artifact (Scorecard source), matched by KIND. Carries final_metrics.json
- * JSON in `meta` (ADR-0011/0014). Undefined until the run emits final_metrics.json. */
+/** The metrics artifact (Scorecard source): kind "metrics", ref "metrics". Carries
+ * final_metrics.json JSON in `meta` (ADR-0011/0014). */
 export const selectMetrics = (session: RunState): Artifact | undefined =>
-  Object.values(session.artifacts).find((a) => a.kind === "metrics");
+  Object.values(session.artifacts).find((a) => a.kind === "metrics" && a.ref === "metrics");
+
+/** The tuned-hyperparameters companion (kind "metrics", ref "params"): best_params.json
+ * JSON in `meta`, joined into the Leaderboard rows (S7). */
+export const selectParams = (session: RunState): Artifact | undefined =>
+  Object.values(session.artifacts).find((a) => a.kind === "metrics" && a.ref === "params");
