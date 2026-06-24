@@ -21,7 +21,9 @@ import { ViewRail, type CanvasView, type ViewDef } from "./ViewRail";
 import { Timeline } from "./Timeline";
 import { Canvas } from "./Canvas";
 import { SqlConsole } from "./SqlConsole";
-import { selectHasDataset, selectLeaderboard } from "../store/selectors";
+import { Scorecard } from "./Scorecard";
+import { selectHasDataset, selectLeaderboard, selectMetrics } from "../store/selectors";
+import { parseMetrics } from "../lib/metrics";
 
 function WorkspaceInner() {
   const c = useRunContext();
@@ -127,6 +129,9 @@ function WorkspaceInner() {
         )}
         {canvasOpen && (
           <div className="canvas-host">
+            {/* Persistent metric strip above the swappable canvas (hidden until a metrics
+                artifact arrives). Self-configures the run framing from final_metrics.json. */}
+            <Scorecard />
             {/* A throw while rendering an artifact (bad report/table/chart) must NOT unmount
                 the app and kill the agent WebSocket — contain it to the canvas. Keyed on
                 view so switching views clears a stuck error. */}
@@ -189,7 +194,11 @@ function CanvasRegion({ view, injectedSql }: { view: CanvasView; injectedSql?: {
     case "leaderboard": {
       // Match by kind (the real daemon's ref is "candidates", not "leaderboard").
       const lb = selectLeaderboard(state);
-      return <Canvas artifacts={lb ? [lb] : artifacts} />;
+      // Thread the run's real task_type (from the metrics artifact) so the board's metric
+      // labels are correct for regression/multiclass — no longer hard-coded to binary (S5).
+      const metricsArtifact = selectMetrics(state);
+      const problemType = metricsArtifact ? parseMetrics(metricsArtifact.meta)?.taskType : undefined;
+      return <Canvas artifacts={lb ? [lb] : artifacts} problemType={problemType} />;
     }
     case "overview":
     default:

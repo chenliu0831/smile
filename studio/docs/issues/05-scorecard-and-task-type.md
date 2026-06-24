@@ -14,13 +14,15 @@ End-to-end:
 
 ## Acceptance criteria
 
-- [ ] The overlaid automl skill emits `output/final_metrics.json` as a public output (carrying at least task_type, primary_metric, OOF/test scores, ensemble method).
-- [ ] `metrics` is added to `ArtifactKind` across contract, schema, and Java mirror; the watcher emits a `metrics` **Artifact** with JSON inline in `meta` and parses no report markdown / no `state.json`.
-- [ ] A persistent **Scorecard** strip renders above the canvas from the `metrics` artifact via a selector; scores fill in as the run completes; hovering a metric reveals its source field/step.
-- [ ] The **Leaderboard**'s metric is driven by the run's real `task_type` (no hard-coded `"binary"`); a non-binary run shows correct metric labels.
-- [ ] The Scorecard hides gracefully when no `metrics` artifact is present.
-- [ ] Conformance test covers the `metrics` representative; a replay-fixture UAT asserts the strip renders from a captured `metrics` artifact.
+- [x] The overlaid automl skill emits `output/final_metrics.json` as a public output (carrying at least task_type, primary_metric, OOF/test scores, ensemble method).
+- [x] `metrics` is added to `ArtifactKind` across contract, schema, and Java mirror; the watcher emits a `metrics` **Artifact** with JSON inline in `meta` and parses no report markdown / no `state.json`.
+- [x] A persistent **Scorecard** strip renders above the canvas from the `metrics` artifact via a selector; scores fill in as the run completes; hovering a metric reveals its source field/step.
+- [x] The **Leaderboard**'s metric is driven by the run's real `task_type` (no hard-coded `"binary"`); a non-binary run shows correct metric labels.
+- [x] The Scorecard hides gracefully when no `metrics` artifact is present.
+- [x] Conformance test covers the `metrics` representative; a replay-fixture UAT asserts the strip renders from a captured `metrics` artifact.
 
 ## Blocked by
 
 - S1 — `meta` field prefactor
+
+**Status: complete.** Skill overlay (emit_final_metrics.py + SKILL.md item-7) emits output/final_metrics.json deterministically from state.json/report; watcher's JSON-sidecar scan (from S4) surfaces it as a `metrics` artifact; Scorecard strip renders framing+scores via selectMetrics, hides gracefully; Leaderboard metric now driven by the run's task_type. Verified: app 125 tests + tsc clean; serve watcher/conformance pass; emitter smoke-tested.

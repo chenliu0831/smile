@@ -38,3 +38,8 @@ export const selectHasDataset = (
  */
 export const selectLeaderboard = (session: RunState): Artifact | undefined =>
   Object.values(session.artifacts).find((a) => a.kind === "leaderboard");
+
+/** The metrics artifact (Scorecard source), matched by KIND. Carries final_metrics.json
+ * JSON in `meta` (ADR-0011/0014). Undefined until the run emits final_metrics.json. */
+export const selectMetrics = (session: RunState): Artifact | undefined =>
+  Object.values(session.artifacts).find((a) => a.kind === "metrics");

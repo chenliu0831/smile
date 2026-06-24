@@ -4,6 +4,7 @@
  */
 import { useEffect, useState } from "react";
 import type { Artifact } from "../daemon/protocol";
+import type { ProblemType } from "../lib/leaderboard";
 import { Markdown } from "./Markdown";
 import { Leaderboard } from "./Leaderboard";
 import { Chart } from "./Chart";
@@ -11,8 +12,8 @@ import { PredictionsStudio, isPredictionsArtifact } from "./PredictionsStudio";
 import { PermImportanceChart } from "./PermImportanceChart";
 import { ErrorBoundary } from "./ErrorBoundary";
 
-function ArtifactView({ artifact }: { artifact: Artifact }) {
-  if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} />;
+function ArtifactView({ artifact, problemType }: { artifact: Artifact; problemType?: ProblemType }) {
+  if (artifact.kind === "leaderboard" && artifact.body) return <Leaderboard markdown={artifact.body} problemType={problemType} />;
   if (artifact.kind === "report" && artifact.body) return <Markdown source={artifact.body} />;
   if (artifact.kind === "chart" && artifact.viz) return <Chart spec={artifact.viz} />;
   // Driver Diagnostics: permutation importance carried inline in `meta` (ADR-0011).
@@ -36,7 +37,7 @@ function ArtifactView({ artifact }: { artifact: Artifact }) {
   return <div className="canvas-empty">No preview for this artifact.</div>;
 }
 
-export function Canvas({ artifacts }: { artifacts: Artifact[] }) {
+export function Canvas({ artifacts, problemType }: { artifacts: Artifact[]; problemType?: ProblemType }) {
   const [activeRef, setActiveRef] = useState<string | null>(null);
 
   // Follow the latest artifact as the run streams, unless the user has picked one.
@@ -66,7 +67,7 @@ export function Canvas({ artifacts }: { artifacts: Artifact[] }) {
           </div>
           {active && (
             <ErrorBoundary label={`“${active.title}”`} resetKey={active.ref}>
-              <ArtifactView artifact={active} />
+              <ArtifactView artifact={active} problemType={problemType} />
             </ErrorBoundary>
           )}
         </>

@@ -178,6 +178,15 @@ button {
 .diagnostics-actions button { font-size: 12px; color: var(--text-dim); background: var(--bg-elev); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .diagnostics-actions button:hover { color: var(--text); border-color: var(--accent); }
 
+/* ---- Scorecard strip (ADR-0011) ---- */
+.scorecard { border: 1px solid var(--border); border-radius: 10px; background: var(--bg-elev); padding: 10px 14px; margin-bottom: 12px; }
+.scorecard-framing { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 6px; }
+.scorecard-scores { display: flex; gap: 20px; flex-wrap: wrap; align-items: baseline; font-family: var(--mono); }
+.scorecard-score { display: flex; gap: 6px; align-items: baseline; }
+.scorecard-label { font-size: 11px; color: var(--text-dim); }
+.scorecard-score b { font-size: 15px; color: var(--text); }
+.scorecard-ensemble { font-size: 12px; color: var(--text-dim); font-family: var(--font); }
+
 /* ---- Leaderboard table ---- */
 .grid { width: 100%; border-collapse: collapse; font-size: 13px; }
 .grid th, .grid td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
