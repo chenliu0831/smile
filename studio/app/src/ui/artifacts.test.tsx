@@ -16,7 +16,8 @@ test("Leaderboard renders ranked rows with the best candidate first", () => {
   expect(rows).toHaveLength(3);
   // best candidate (lgbm) appears before rf
   expect(screen.getByText("candidate_lgbm")).toBeInTheDocument();
-  expect(screen.getByText("0.913")).toBeInTheDocument();
+  // scores render to 4dp inside the score bar
+  expect(screen.getByText("0.9130")).toBeInTheDocument();
 });
 
 test("Markdown renders headings, bold and inline code", () => {

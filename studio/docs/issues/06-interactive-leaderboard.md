@@ -12,13 +12,15 @@ Pin every displayed number to a single source and compute lift client-side so th
 
 ## Acceptance criteria
 
-- [ ] The **Leaderboard** renders all rows from the merged ranking (defaults, tuned, ensembles), not just the five default **Candidates**.
-- [ ] Columns are sortable; each row shows a score bar color-coded by model type.
-- [ ] ±std whiskers render only where std is finite (tuned/ensemble rows with no std show none).
-- [ ] A verdict block summarizes ensemble-vs-base-learners and ensemble-vs-stacking.
-- [ ] Every displayed number traces to a single pinned source; lift is computed client-side and reconciles.
-- [ ] The pure parser is unit-tested (parse + sort + malformed-input crash-safety), following the existing leaderboard-parser test prior art.
+- [x] The **Leaderboard** renders all rows from the merged ranking (defaults, tuned, ensembles), not just the five default **Candidates**.
+- [x] Columns are sortable; each row shows a score bar color-coded by model type.
+- [x] ±std whiskers render only where std is finite (tuned/ensemble rows with no std show none).
+- [x] A verdict block summarizes ensemble-vs-base-learners and ensemble-vs-stacking.
+- [x] Every displayed number traces to a single pinned source; lift is computed client-side and reconciles.
+- [x] The pure parser is unit-tested (parse + sort + malformed-input crash-safety), following the existing leaderboard-parser test prior art.
 
 ## Blocked by
 
 - None — can start immediately.
+
+**Status: complete.** Sortable columns, type-colored score bars, ±std whiskers (finite only), ensemble verdict. Pure helpers (classifyModel/sortCandidates/ensembleVerdict) unit-tested; problemType prop defaults to binary (S5 threads real task_type). Verified: app 113 tests + tsc clean.

@@ -178,6 +178,14 @@ button {
 .grid td.score { font-family: var(--mono); }
 .grid .rank { color: var(--text-dim); width: 28px; }
 .grid .medal { color: var(--good); }
+.grid th.lb-sortable { cursor: pointer; user-select: none; }
+.grid th.lb-sortable:hover { color: var(--text); }
+.lb-bar-cell { display: flex; align-items: center; gap: 8px; min-width: 160px; }
+.lb-bar { position: relative; height: 12px; border-radius: 3px; display: inline-block; min-width: 2px; }
+.lb-whisker { position: absolute; right: 0; top: 50%; transform: translateY(-50%); height: 2px; background: rgba(230,237,243,0.55); }
+.lb-score-num { font-family: var(--mono); color: var(--text); }
+.lb-type { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.lb-verdict { margin-top: 14px; padding: 10px 14px; border: 1px solid var(--border); border-left: 3px solid var(--gold); border-radius: 8px; background: var(--bg-elev); font-size: 13px; color: var(--text); }
 
 /* ---- Agent stream ---- */
 .stream-body { flex: 1; overflow: auto; padding: 12px 14px; }

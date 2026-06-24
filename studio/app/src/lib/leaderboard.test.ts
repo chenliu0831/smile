@@ -1,4 +1,10 @@
-import { defaultMetric, parseLeaderboard } from "./leaderboard";
+import {
+  defaultMetric,
+  parseLeaderboard,
+  classifyModel,
+  sortCandidates,
+  ensembleVerdict,
+} from "./leaderboard";
 
 const candidateScoresMd = `
 # Candidate Scores
@@ -70,4 +76,61 @@ test("ranks best-first for a lower-is-better metric (RMSE)", () => {
     "candidate_a",
     "candidate_c",
   ]);
+});
+
+test("classifies model type from name + notes (ensemble > tuned > default)", () => {
+  expect(classifyModel("Ensemble (weighted avg)", "")).toBe("ensemble");
+  expect(classifyModel("hill_climb_blend", "")).toBe("ensemble");
+  expect(classifyModel("candidate_xgb", "tuned via Optuna")).toBe("tuned");
+  expect(classifyModel("candidate_lgbm", "gradient boosting")).toBe("default");
+  // ensemble wins when both signals are present
+  expect(classifyModel("tuned ensemble", "tuned")).toBe("ensemble");
+});
+
+test("parseLeaderboard populates modelType on each row", () => {
+  const md = `
+| Candidate | Val Score | Std | Params | Runtime | Notes |
+|---|---|---|---|---|---|
+| Ensemble (avg) | 0.92 | — | — | 5 | weighted average |
+| candidate_xgb | 0.91 | 0.01 | d=6 | 51 | tuned |
+| candidate_rf | 0.88 | 0.01 | t=500 | 31 | random forest |
+`;
+  const board = parseLeaderboard(md, { metric: "AUC", higherIsBetter: true });
+  const byName = Object.fromEntries(board.rows.map((r) => [r.name, r.modelType]));
+  expect(byName["Ensemble (avg)"]).toBe("ensemble");
+  expect(byName["candidate_xgb"]).toBe("tuned");
+  expect(byName["candidate_rf"]).toBe("default");
+  // The "—" std cell parses to undefined (whisker suppressed), not NaN.
+  expect(board.rows.find((r) => r.name === "Ensemble (avg)")?.std).toBeUndefined();
+});
+
+test("sortCandidates sorts by name, runtime, and metric-aware score", () => {
+  const board = parseLeaderboard(candidateScoresMd, { metric: "AUC", higherIsBetter: true });
+  expect(sortCandidates(board.rows, "name", true).map((r) => r.name)).toEqual([
+    "candidate_lgbm", "candidate_mlp", "candidate_rf",
+  ]);
+  // runtime ascending: rf(31) < lgbm(42) < mlp(88)
+  expect(sortCandidates(board.rows, "runtimeSec", true).map((r) => r.name)).toEqual([
+    "candidate_rf", "candidate_lgbm", "candidate_mlp",
+  ]);
+});
+
+test("ensembleVerdict computes lift over the best base learner, pinned to one board", () => {
+  const md = `
+| Candidate | Val Score | Std | Params | Runtime | Notes |
+|---|---|---|---|---|---|
+| Ensemble (avg) | 0.924 | — | — | 5 | weighted average |
+| candidate_lgbm | 0.913 | 0.008 | lr=0.05 | 42 | gbm |
+`;
+  const board = parseLeaderboard(md, { metric: "AUC", higherIsBetter: true });
+  const v = ensembleVerdict(board)!;
+  expect(v.ensemble.name).toBe("Ensemble (avg)");
+  expect(v.bestBase.name).toBe("candidate_lgbm");
+  expect(v.beatsBest).toBe(true);
+  expect(v.lift).toBeCloseTo(0.011);
+});
+
+test("ensembleVerdict returns null when there is no ensemble row", () => {
+  const board = parseLeaderboard(candidateScoresMd, { metric: "AUC", higherIsBetter: true });
+  expect(ensembleVerdict(board)).toBeNull();
 });
