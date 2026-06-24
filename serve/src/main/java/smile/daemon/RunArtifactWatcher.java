@@ -27,6 +27,8 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import ioa.llm.tool.SharedSql;
 import smile.daemon.DaemonMessage.*;
 
@@ -59,6 +61,18 @@ public final class RunArtifactWatcher {
         new StageSpec("report", "Report", "output/automl_report.md", "report", "AutoML Report"),
         new StageSpec("submission", "Submission", "final/submission.csv", "file", "submission.csv")
     );
+
+    /** A public JSON sidecar surfaced as a structured artifact (ADR-0011/0014): its parsed
+     * JSON rides the artifact's {@code meta} and the consumer parses it. */
+    private record JsonSidecar(String relPath, String ref, String kind, String title) {}
+
+    /** Skill-emitted public JSON sidecars the cockpit consumes (ADR-0014). */
+    private static final List<JsonSidecar> JSON_SIDECARS = List.of(
+        new JsonSidecar("output/postprocess_results.json", "diagnostics", "diagnostics", "Driver Diagnostics"),
+        new JsonSidecar("output/final_metrics.json", "metrics", "metrics", "Run Scorecard")
+    );
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final String sessionId;
     private final Path workingDir;
@@ -144,6 +158,32 @@ public final class RunArtifactWatcher {
             }
         }
         scanFreeformArtifacts();
+        scanJsonSidecars();
+    }
+
+    /**
+     * Surface skill-emitted public JSON sidecars (ADR-0014) as structured artifacts: the
+     * file's parsed JSON rides the artifact's {@code meta}, and the consumer parses it (the
+     * daemon does not interpret the schema). mtime-keyed dedupe so a regenerated sidecar
+     * re-emits; stable artifact ref so the canvas replaces in place. A parse failure is
+     * skipped (retried next tick) rather than emitting a broken artifact.
+     */
+    private void scanJsonSidecars() {
+        for (JsonSidecar s : JSON_SIDECARS) {
+            Path f = workingDir.resolve(s.relPath());
+            if (!Files.isRegularFile(f)) continue;
+            String key = "json:" + s.ref() + ":" + mtimeOf(f);
+            if (!announcedArtifacts.add(key)) continue;
+            JsonNode meta;
+            try {
+                meta = JSON.readTree(f.toFile());
+            } catch (IOException e) {
+                announcedArtifacts.remove(key); // unparseable this tick — retry next poll
+                continue;
+            }
+            emit.accept(new ArtifactMsg(sessionId,
+                new Artifact(s.ref(), s.kind(), s.title(), null, null, null, f.toString(), meta)));
+        }
     }
 
     /**

@@ -86,6 +86,10 @@ export const ArtifactKind = T.Union([
   T.Literal("dataframe"),
   T.Literal("file"),
   T.Literal("image"),
+  // Structured kinds carrying their payload in `meta` (ADR-0011): metrics → Scorecard (S5),
+  // diagnostics → Driver Diagnostics permutation-importance chart (S4).
+  T.Literal("diagnostics"),
+  T.Literal("metrics"),
 ]);
 
 /** A run artifact (report | leaderboard | chart | dataframe | file | image). */

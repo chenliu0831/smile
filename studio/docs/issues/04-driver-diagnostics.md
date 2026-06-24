@@ -12,12 +12,14 @@ Whiskers render only where std is finite.
 
 ## Acceptance criteria
 
-- [ ] `diagnostics` is added to `ArtifactKind` across the TypeBox contract, regenerated JSON Schema, and Java mirror.
-- [ ] The watcher emits a `diagnostics` **Artifact** from `postprocess_results.json` with the importance array inline in `meta`; it performs no parsing beyond byte-inlining.
-- [ ] The canvas renders a sorted horizontal importance bar chart with ±1 std whiskers (ECharts custom series), whiskers shown only where std is finite.
-- [ ] Hover reveals exact mean±std and a plain-English line; clicking a feature fires an "Ask Clair" turn over the `user-message` channel and offers an inline "slice by" SELECT.
-- [ ] The contract-conformance test covers the `diagnostics` representative; a replay-fixture UAT asserts the chart renders from a captured `diagnostics` artifact.
+- [x] `diagnostics` is added to `ArtifactKind` across the TypeBox contract, regenerated JSON Schema, and Java mirror.
+- [x] The watcher emits a `diagnostics` **Artifact** from `postprocess_results.json` with the importance array inline in `meta`; it performs no parsing beyond byte-inlining.
+- [x] The canvas renders a sorted horizontal importance bar chart with ±1 std whiskers (ECharts custom series), whiskers shown only where std is finite.
+- [x] Hover reveals exact mean±std and a plain-English line; clicking a feature fires an "Ask Clair" turn over the `user-message` channel and offers an inline "slice by" SELECT.
+- [x] The contract-conformance test covers the `diagnostics` representative; a replay-fixture UAT asserts the chart renders from a captured `diagnostics` artifact.
 
 ## Blocked by
 
 - S1 — `meta` field prefactor
+
+**Status: complete.** `diagnostics` ArtifactKind added; watcher inlines postprocess_results.json into `meta` via a generic JSON-sidecar scan (also wired for S5's final_metrics.json); PermImportanceChart renders ECharts bars + ±std whiskers (custom series) with click→Ask Clair/Slice steering. Verified: app 119 tests + tsc clean; serve watcher/conformance pass.

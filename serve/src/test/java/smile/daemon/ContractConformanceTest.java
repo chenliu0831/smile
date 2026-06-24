@@ -157,18 +157,22 @@ public class ContractConformanceTest {
         var viz = new DaemonMessage.DataVizSpec("line", "ROC", Map.of("x", "fpr", "y", "tpr"), arrow);
         var chart = new DaemonMessage.Artifact("chart:roc", "chart", "ROC Curve", null, viz, arrow, null, null);
         assertConforms("DaemonMessage", new DaemonMessage.ArtifactMsg("run-1", chart));
-        // An artifact carrying a JSON `meta` payload (ADR-0011): the new typed channel for
-        // structured data (the metrics/diagnostics kinds will use it). Tested here on an
-        // existing kind — S1 adds the `meta` field only, not new ArtifactKind literals — so
-        // this proves meta round-trips through the schema independent of kind.
-        var meta = MAPPER.valueToTree(Map.of(
+        // Structured kinds carrying their JSON payload in `meta` (ADR-0011): metrics → Scorecard,
+        // diagnostics → Driver Diagnostics. body/viz/data are null; meta is the typed channel.
+        var metricsMeta = MAPPER.valueToTree(Map.of(
                 "task_type", "binary_classification",
                 "primary_metric", "AUC",
                 "test_auc", 0.860,
                 "ensemble_method", "weighted_average"));
-        var withMeta = new DaemonMessage.Artifact("dataframe:preds", "dataframe", "Predictions",
-                null, null, null, null, meta);
-        assertConforms("DaemonMessage", new DaemonMessage.ArtifactMsg("run-1", withMeta));
+        var metrics = new DaemonMessage.Artifact("metrics", "metrics", "Run Scorecard",
+                null, null, null, null, metricsMeta);
+        assertConforms("DaemonMessage", new DaemonMessage.ArtifactMsg("run-1", metrics));
+
+        var diagMeta = MAPPER.valueToTree(Map.of("top5_features",
+                List.of(Map.of("feature", "Title_Mr", "mean", 0.066, "std", 0.018))));
+        var diagnostics = new DaemonMessage.Artifact("diagnostics", "diagnostics", "Driver Diagnostics",
+                null, null, null, null, diagMeta);
+        assertConforms("DaemonMessage", new DaemonMessage.ArtifactMsg("run-1", diagnostics));
     }
 
     @Test

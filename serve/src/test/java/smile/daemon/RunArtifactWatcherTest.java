@@ -109,6 +109,34 @@ public class RunArtifactWatcherTest {
         watcher.stop();
     }
 
+    @Test
+    public void jsonSidecarBecomesAStructuredArtifactWithParsedMeta(@TempDir Path dir) throws Exception {
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.RunStarted), 2000);
+
+        // When: the postprocess sidecar appears (a skill-emitted public JSON output).
+        Files.createDirectories(dir.resolve("output"));
+        Files.writeString(dir.resolve("output/postprocess_results.json"),
+                "{\"top5_features\":[{\"feature\":\"Title_Mr\",\"mean\":0.066,\"std\":0.018}]}");
+
+        // Then: a `diagnostics` artifact is emitted with the parsed JSON inline in meta.
+        waitFor(() -> msgs.stream().anyMatch(m ->
+                m instanceof DaemonMessage.ArtifactMsg a && "diagnostics".equals(a.artifact().ref())), 4000);
+        var art = msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.ref().equals("diagnostics")).findFirst().orElseThrow();
+        assertEquals("diagnostics", art.kind());
+        assertNull(art.body(), "structured sidecars carry JSON in meta, not body");
+        assertNotNull(art.meta(), "diagnostics artifact must carry parsed JSON in meta");
+        // The daemon parsed the file to a JsonNode but did NOT interpret its schema.
+        assertEquals(0.066, art.meta().get("top5_features").get(0).get("mean").asDouble(), 1e-9);
+
+        watcher.stop();
+    }
+
     private interface Cond { boolean ok(); }
 
     private void waitFor(Cond c, long timeoutMs) throws InterruptedException {

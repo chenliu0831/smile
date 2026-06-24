@@ -485,6 +485,14 @@
                 {
                   "const": "image",
                   "type": "string"
+                },
+                {
+                  "const": "diagnostics",
+                  "type": "string"
+                },
+                {
+                  "const": "metrics",
+                  "type": "string"
                 }
               ]
             },
