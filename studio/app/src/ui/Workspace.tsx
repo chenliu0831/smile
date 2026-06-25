@@ -22,11 +22,11 @@ import { Timeline } from "./Timeline";
 import { Canvas } from "./Canvas";
 import { SqlConsole } from "./SqlConsole";
 import { Scorecard } from "./Scorecard";
-import { selectHasDataset, selectLeaderboard, selectMetrics, selectParams } from "../store/selectors";
+import { selectHasDataset, selectLeaderboard, selectMetrics, selectParams, selectAutoFollow } from "../store/selectors";
 import { parseMetrics } from "../lib/metrics";
 import { parseParams } from "../lib/params";
 
-function WorkspaceInner() {
+export function WorkspaceInner() {
   const c = useRunContext();
   const { state, datasetInfo, dataset, canLoadDataset, addData, sendMessage } = c;
 
@@ -57,6 +57,9 @@ function WorkspaceInner() {
   );
 
   const [view, setView] = useState<CanvasView>("overview");
+  // The selected pipeline stage is lifted here (from CanvasRegion) so Auto-follow (ADR-0017)
+  // can drive the view AND the stage selection coherently under one user-picked latch.
+  const [selectedStage, setSelectedStage] = useState<string | null>(null);
   // The agent's "Open in console" injects a statement into the SQL editor (the Data view).
   // A counter keys the prop so re-opening the SAME statement still triggers the inject.
   const [injectedSql, setInjectedSql] = useState<{ sql: string; n: number } | null>(null);
@@ -74,33 +77,60 @@ function WorkspaceInner() {
   // watcher seeds the whole timeline as `pending` up front, so gating on hasStages alone
   // would latch on 'pipeline' and never advance to the leaderboard (audit #9).
   const pipelineLive = state.stages.some((s) => s.status !== "pending");
-  const autoTarget: CanvasView | null = leaderboard
-    ? "leaderboard"
+  // Auto-follow (ADR-0017): the stage to select as the Run streams (latest stage with
+  // artifacts; rests on the final report at finish), or null if nothing's followable yet.
+  const followStage = selectAutoFollow(state);
+  // View priority: whenever there is a followable stage — live OR rested-on-the-final-report
+  // at finish — stage-following OWNS the view (Pipeline), superseding the leaderboard
+  // auto-jump (one coherent "watch it work" narrative; the board stays one rail click away).
+  // Leaderboard only auto-reveals when there's no followable stage at all (e.g. a
+  // summarize-only turn that produced a board but no pipeline).
+  const autoTarget: CanvasView | null = followStage
+    ? "pipeline"
+    : leaderboard ? "leaderboard"
     : pipelineLive ? "pipeline"
     : hasArtifacts ? "overview"   // a summarize-only turn produces an artifact but no stages
     : hasDataset ? "data" : null;
-  // Re-arm auto-navigation on each new user turn (fresh run intent): clear the user-picked
-  // latch AND the last-target memo, so the next run's view reveals even if the user switched
-  // views earlier and even if the new run lands on the SAME view kind as the prior one
-  // (audit #12). Computed inline so the auto-reveal effect below sees the re-armed state.
-  const userTurnCount = state.turns.filter((t) => t.role === "user").length;
   const lastAutoTarget = useRef<CanvasView | null>(null);
-  const lastUserTurn = useRef(0);
-  if (userTurnCount !== lastUserTurn.current) {
-    lastUserTurn.current = userTurnCount;
-    lastAutoTarget.current = null; // re-arm target memo for the new turn
-  }
-  useEffect(() => {
-    if (userTurnCount > 0) setUserPicked(false);
-  }, [userTurnCount]);
+  const lastFollowStage = useRef<string | null>(null);
 
+  // Re-arm auto-navigation on NEW-RUN intent: a transition INTO the `running` status (the
+  // first run, or a new run started after one finished). `status` flips to running only on
+  // session/run-started and never on turn-finished (runState.ts), so a mid-run chat reply
+  // keeps status==='running' and does NOT re-arm — auto-follow won't yank a user off a stage
+  // they're reading just because they asked a question. Clears the latch, the target memos,
+  // and any stale selection from the prior run.
   useEffect(() => {
+    if (state.status === "running") {
+      setUserPicked(false);
+      lastAutoTarget.current = null;
+      lastFollowStage.current = null;
+      setSelectedStage(null);
+    }
+  }, [state.status]);
+
+  // Auto-reveal the relevant view. Gated on `userPicked` AND re-runs when it flips: while the
+  // user holds control we DON'T advance the memo, so the moment the latch clears (re-arm)
+  // this re-fires and the still-pending target is written — fixing the stale-closure case
+  // where a re-armed run whose target equals the prior one would otherwise never reveal.
+  useEffect(() => {
+    if (userPicked) return;
     if (autoTarget && autoTarget !== lastAutoTarget.current) {
       lastAutoTarget.current = autoTarget;
-      if (!userPicked) setView(autoTarget);
+      setView(autoTarget);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoTarget, userTurnCount]);
+  }, [autoTarget, userPicked]);
+
+  // Auto-follow the streaming stage — same latch discipline as the view reveal above: select
+  // the followable stage as its artifacts land, never while the user holds control, and
+  // re-fire when the latch clears so a re-armed run restores the selection.
+  useEffect(() => {
+    if (userPicked) return;
+    if (followStage && followStage !== lastFollowStage.current) {
+      lastFollowStage.current = followStage;
+      setSelectedStage(followStage);
+    }
+  }, [followStage, userPicked]);
 
   const welcome = (
     <ChatWelcome
@@ -125,7 +155,7 @@ function WorkspaceInner() {
             views={views}
             active={view}
             onSelect={(v) => { setUserPicked(true); setView(v); }}
-            onReset={() => { setUserPicked(false); setView("overview"); }}
+            onReset={() => { setUserPicked(false); setView("overview"); setSelectedStage(null); }}
           />
         )}
         {canvasOpen && (
@@ -137,7 +167,17 @@ function WorkspaceInner() {
                 the app and kill the agent WebSocket — contain it to the canvas. Keyed on
                 view so switching views clears a stuck error. */}
             <ErrorBoundary label="this view" resetKey={view}>
-              <CanvasRegion view={view} injectedSql={injectedSql} />
+              <CanvasRegion
+                view={view}
+                injectedSql={injectedSql}
+                selectedStage={selectedStage}
+                onSelectStage={(id) => {
+                  // A manual stage click takes control — stop auto-following for this run
+                  // (mirrors the userPicked latch on view selection). Click again to deselect.
+                  setUserPicked(true);
+                  setSelectedStage((cur) => (id === cur ? null : id));
+                }}
+              />
             </ErrorBoundary>
           </div>
         )}
@@ -162,13 +202,22 @@ function WorkspaceInner() {
   );
 }
 
-/** The single swappable canvas region; renders the selected view. */
-function CanvasRegion({ view, injectedSql }: { view: CanvasView; injectedSql?: { sql: string; n: number } | null }) {
+/** The single swappable canvas region; renders the selected view. The selected pipeline
+ *  stage is owned by WorkspaceInner (so Auto-follow can drive it under the userPicked latch)
+ *  and threaded in. */
+function CanvasRegion({
+  view,
+  injectedSql,
+  selectedStage,
+  onSelectStage,
+}: {
+  view: CanvasView;
+  injectedSql?: { sql: string; n: number } | null;
+  selectedStage: string | null;
+  onSelectStage: (stageId: string) => void;
+}) {
   const { state } = useRunContext();
   const artifacts = Object.values(state.artifacts);
-  // Pipeline view: selecting a stage focuses the canvas on that stage's artifacts
-  // (preserves the RunZones behavior).
-  const [selectedStage, setSelectedStage] = useState<string | null>(null);
 
   switch (view) {
     case "data":
@@ -186,7 +235,7 @@ function CanvasRegion({ view, injectedSql }: { view: CanvasView; injectedSql?: {
           <Timeline
             stages={state.stages}
             selectedId={selectedStage}
-            onSelect={(id) => setSelectedStage(id === selectedStage ? null : id)}
+            onSelect={onSelectStage}
           />
           <Canvas artifacts={stageArtifacts} />
         </div>

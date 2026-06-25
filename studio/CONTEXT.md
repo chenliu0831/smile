@@ -66,6 +66,14 @@ _Avoid_: feature importance chart (this includes the uncertainty + steering affo
 The single typed JSON field on an **Artifact** that carries structured payloads (`metrics`, `diagnostics`). Distinct from `body` (now markdown / `data:` URIs only) and `data` (an **Arrow Frame** reference for bulk tabular). The one schema-describable channel for structured data.
 _Avoid_: stuffing JSON into `body`, payload, blob
 
+**Report Chart**:
+A native ECharts bar rendered inline, directly below a numeric markdown table inside a `report` **Artifact** — the table's first numeric column plotted against its label column, with a picker to switch column. Produced by the **Webview** parsing the report markdown (ADR-0016), not by an agent **DataViz call**; its data is inline (no `/data/{ref}` fetch). Enriches the document in place; it does **not** replace or suppress the table, nor a dedicated cockpit surface (the **Leaderboard**, **Scorecard**, **Predictions Studio**).
+_Avoid_: DataViz call (that is a by-reference agent-emitted spec), plot, chart artifact
+
+**Auto-follow**:
+The cockpit behavior (ADR-0017) of selecting the latest pipeline stage that has produced artifacts as a live **AutoML Run** streams — driving the Pipeline view and the selected stage together — until the user manually picks a stage or view, which hands control to the user for the rest of the run. The stage-level evolution of the view-level auto-reveal; both share one user-picked latch.
+_Avoid_: auto-scroll, auto-jump (it never yanks a user who has taken control)
+
 ### Model production paths
 
 **Trained Model** (JVM path):
@@ -117,6 +125,7 @@ _Avoid_: state.json (that is the skill's private checkpoint, not the UI contract
 - An **AutoML Run** produces **Run Artifacts** and a **Solution Pipeline**; the **Leaderboard** and **DataViz calls** are views over those artifacts.
 - A **Solution Pipeline** is advisory; only a **Trained Model** (`.sml`) is deployable via **serve** (deployment deferred).
 - A **Gate** pauses an **AutoML Run**; **Run Progress** drives the timeline that shows where it paused.
+- **Run Progress** also drives **Auto-follow**: as each stage gains artifacts, the cockpit selects it; a **Report Chart** then surfaces inline within any report **Run Artifact** that stage produced.
 
 ## Example dialogue
 

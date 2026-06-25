@@ -7,7 +7,7 @@
  * a `RunStore` snapshot or the reactive fields the `RunController` already exposes — callers
  * stay subscribed through the controller; these add no out-of-band store reads.
  */
-import type { Artifact } from "../daemon/protocol";
+import type { Artifact, StageProgress } from "../daemon/protocol";
 import type { RunState } from "./runState";
 import type { LoadedDataset } from "../daemon/dataset";
 import type { DatasetInfo } from "../daemon/datasetInfo";
@@ -54,3 +54,34 @@ export const selectParams = (session: RunState): Artifact | undefined =>
  * with a driver rank when present (S8 soft enhancement). */
 export const selectDiagnostics = (session: RunState): Artifact | undefined =>
   Object.values(session.artifacts).find((a) => a.kind === "diagnostics");
+
+/** A stage that has produced at least one artifact resolvable in the store. */
+const stageHasArtifacts = (session: RunState, stage: StageProgress): boolean =>
+  stage.artifactRefs.some((ref) => !!session.artifacts[ref]);
+
+/**
+ * Auto-follow target (ADR-0017): the stageId the cockpit should select as a Run streams, or
+ * null when there's nothing to follow (no stage has produced artifacts yet). A pure function
+ * of session state so the "which stage" decision is unit-testable without React or timers;
+ * the `userPicked` latch and the actual view/selection writes live in Workspace.
+ *
+ * - While the Run streams, follow the LATEST (highest-index) stage that has resolvable
+ *   artifacts — "the right step when its artifacts show up". Stage order is the timeline
+ *   order the daemon seeded; later in the array = later in the pipeline.
+ * - When the Run has finished, rest on the latest stage whose artifact is a `report` (the
+ *   final report is the natural resting place), matched by KIND not stageId — consistent
+ *   with selectLeaderboard. Falls back to the latest stage-with-artifacts if no report stage.
+ */
+export const selectAutoFollow = (session: RunState): string | null => {
+  const withArtifacts = session.stages.filter((s) => stageHasArtifacts(session, s));
+  if (withArtifacts.length === 0) return null;
+
+  const isLive = session.status === "running";
+  if (!isLive) {
+    const reportStages = withArtifacts.filter((s) =>
+      s.artifactRefs.some((ref) => session.artifacts[ref]?.kind === "report"),
+    );
+    if (reportStages.length > 0) return reportStages[reportStages.length - 1].stageId;
+  }
+  return withArtifacts[withArtifacts.length - 1].stageId;
+};

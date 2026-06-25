@@ -152,6 +152,19 @@ button {
   border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; overflow: auto;
   max-height: 360px; white-space: pre; margin: 10px 0;
 }
+/* Report Chart (ADR-0016): the inline bar rendered below a numeric report table. */
+.report-chart {
+  margin: 4px 0 18px; border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px 4px; background: var(--bg-elev);
+}
+.report-chart-picker-wrap {
+  display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim);
+  margin-bottom: 2px;
+}
+.report-chart-picker {
+  font: inherit; font-size: 12px; color: var(--text); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 6px; padding: 2px 6px;
+}
 /* Image artifacts (summarize/EDA PNG charts) + file artifacts. */
 .artifact-image { max-width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--border); background: #fff; }
 .artifact-file { padding: 16px; }

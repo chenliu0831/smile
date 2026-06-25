@@ -3,7 +3,12 @@
  * inline code, list items, GFM tables, and fenced code blocks. The tables + code blocks
  * matter for the agent's EDA/summary output: `describe()` stats and correlation matrices
  * are emitted as GFM tables or aligned code, which previously degraded to flat paragraphs.
+ *
+ * Numeric tables also get an inline Report Chart rendered directly below them (ADR-0016) —
+ * the structured header+rows we already split for the <table> are handed to lib/reportCharts.
  */
+import { tableToChartable } from "../lib/reportCharts";
+import { ReportTableChart } from "./ReportTableChart";
 function renderInline(text: string): (string | JSX.Element)[] {
   const out: (string | JSX.Element)[] = [];
   const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
@@ -79,6 +84,10 @@ export function Markdown({ source }: { source: string }) {
           </tbody>
         </table>,
       );
+      // Chart the table in place when it's numeric (a label column + ≥1 numeric column).
+      // tableToChartable is crash-safe and returns null when there's nothing to chart.
+      const chartable = tableToChartable(header, rows);
+      if (chartable) blocks.push(<ReportTableChart key={key++} chartable={chartable} />);
       continue;
     }
 
