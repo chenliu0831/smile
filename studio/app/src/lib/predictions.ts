@@ -11,8 +11,10 @@
  * binary-classification prediction set, so detection returns null and the view no-ops.
  */
 
-/** A column-oriented table as /data/{ref} returns it: column name -> values. */
-export type ColumnTable = Record<string, (number | string)[]>;
+/** A column-oriented table as /data/{ref} returns it: column name -> values. Re-exported from
+ * the single definition in lib/dataFrame so the grid and the prediction math share one type. */
+export type { ColumnTable } from "./dataFrame";
+import type { ColumnTable } from "./dataFrame";
 
 /** The detected probability/label columns of a binary prediction set. */
 export interface PredictionSchema {
@@ -32,7 +34,7 @@ export interface PredictionRow {
   /** The row's original 0-based index in the prediction set. */
   index: number;
   /** Every column's value for this row (PassengerId, features, …) — for the row inspector. */
-  values: Record<string, number | string>;
+  values: Record<string, number | string | null>;
 }
 
 /** The four confusion cells, as (predicted, actual) pairs. */
@@ -115,8 +117,8 @@ export function toPredictionRows(table: ColumnTable, schema: PredictionSchema): 
     const actual = Number(actuals[i]);
     if (!Number.isFinite(proba)) continue;
     if (actual !== 0 && actual !== 1) continue;
-    const values: Record<string, number | string> = {};
-    for (const c of cols) values[c] = table[c][i];
+    const values: Record<string, number | string | null> = {};
+    for (const c of cols) values[c] = table[c][i] ?? null;
     rows.push({ proba, actual: actual as 0 | 1, index: i, values });
   }
   return rows;

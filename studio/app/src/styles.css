@@ -158,6 +158,12 @@ button {
 .artifact-file-name { font-size: 14px; font-weight: 600; }
 .artifact-file-path { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-top: 6px; word-break: break-all; }
 
+/* ---- Dataframe view (data grid + source path) ---- */
+.dataframe-view { display: flex; flex-direction: column; gap: 10px; }
+.artifact-path { display: flex; align-items: baseline; gap: 8px; font-size: 12px; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 8px; }
+.artifact-path-label { text-transform: uppercase; letter-spacing: 0.5px; font-size: 10px; }
+.artifact-path-value { font-family: var(--mono); color: var(--text); word-break: break-all; background: var(--bg-elev); padding: 2px 6px; border-radius: 4px; }
+
 /* ---- Predictions Studio (ADR-0011) ---- */
 .predictions-studio { padding: 8px 4px; }
 .predictions-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }

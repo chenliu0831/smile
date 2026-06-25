@@ -9,8 +9,8 @@ import type { ParamsByModel } from "../lib/params";
 import { Markdown } from "./Markdown";
 import { Leaderboard } from "./Leaderboard";
 import { Chart } from "./Chart";
-import { PredictionsStudio, isPredictionsArtifact } from "./PredictionsStudio";
 import { PermImportanceChart } from "./PermImportanceChart";
+import { DataFrameView } from "./DataFrameView";
 import { NextSteps } from "./NextSteps";
 import { ErrorBoundary } from "./ErrorBoundary";
 
@@ -28,8 +28,10 @@ function ArtifactView({ artifact, problemType, paramsByModel }: { artifact: Arti
   if (artifact.kind === "chart" && artifact.viz) return <Chart spec={artifact.viz} />;
   // Driver Diagnostics: permutation importance carried inline in `meta` (ADR-0011).
   if (artifact.kind === "diagnostics") return <PermImportanceChart artifact={artifact} />;
-  // A prediction-set dataframe (final/submission.csv → DuckDB) renders as Predictions Studio.
-  if (isPredictionsArtifact(artifact)) return <PredictionsStudio artifact={artifact} />;
+  // A dataframe always shows the data as a table + source path; where the rows form a
+  // prediction set, Predictions Studio (ROC/confusion) renders above the grid (DataFrameView
+  // fetches the rows once and composes both).
+  if (artifact.kind === "dataframe") return <DataFrameView artifact={artifact} />;
   // Image artifacts (summarize/EDA PNG charts) carry a base64 data: URI in body.
   if (artifact.kind === "image" && artifact.body) {
     return <img className="artifact-image" src={artifact.body} alt={artifact.title} />;

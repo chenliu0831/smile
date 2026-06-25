@@ -10,10 +10,9 @@
  * set (a <target>_proba / <target>_actual column pair); other tables no-op (handled by the
  * Canvas dispatch via hasPredictionSchema).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import ReactECharts from "echarts-for-react";
 import type { Artifact } from "../daemon/protocol";
-import { useRunContext } from "../store/RunContext";
 import {
   type ColumnTable,
   type CellKey,
@@ -45,32 +44,7 @@ function pct(x: number): string {
   return Number.isFinite(x) ? x.toFixed(3) : "—";
 }
 
-export function PredictionsStudio({ artifact }: { artifact: Artifact }) {
-  const { httpBase } = useRunContext();
-  const [table, setTable] = useState<ColumnTable | undefined>(undefined);
-  const [failed, setFailed] = useState(false);
-
-  const ref = artifact.data?.ref;
-
-  // Fetch the prediction rows ONCE (per artifact). The slider never refetches.
-  useEffect(() => {
-    let cancelled = false;
-    setTable(undefined);
-    setFailed(false);
-    if (!httpBase || !ref) return;
-    fetch(`${httpBase}/data/${encodeURIComponent(ref)}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((json) => {
-        if (cancelled) return;
-        if (json) setTable(json);
-        else setFailed(true);
-      })
-      .catch(() => {
-        if (!cancelled) setFailed(true);
-      });
-    return () => { cancelled = true; };
-  }, [httpBase, ref]);
-
+export function PredictionsStudio({ table }: { table: ColumnTable | undefined }) {
   const schema = useMemo(() => detectPredictionSchema(table), [table]);
   const rows = useMemo(
     () => (table && schema ? toPredictionRows(table, schema) : []),
@@ -109,15 +83,11 @@ export function PredictionsStudio({ artifact }: { artifact: Artifact }) {
     return { fpr: confusion.fp / negatives, tpr: confusion.tp / positives };
   }, [rows, confusion]);
 
-  if (failed) {
-    return <div className="canvas-empty">Could not load the prediction set.</div>;
-  }
-  if (!table) {
-    return <div className="canvas-empty">Loading predictions…</div>;
-  }
-  if (!schema || rows.length === 0 || roc.length === 0) {
-    // Not a labelled binary prediction set (e.g. regression / unlabeled) — nothing to plot.
-    return <div className="canvas-empty">No labelled predictions to analyze for this run.</div>;
+  // Predictions Studio renders ABOVE the data grid (Canvas pairs them). When there's nothing
+  // to plot — no table yet, or this dataframe isn't a labelled binary prediction set
+  // (no proba+truth) — render NOTHING and let the grid below carry the data.
+  if (!table || !schema || rows.length === 0 || roc.length === 0) {
+    return null;
   }
 
   const rocOption = {

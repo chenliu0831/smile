@@ -131,6 +131,54 @@ public class RunArtifactWatcherTest {
         watcher.stop();
     }
 
+    @Test
+    public void suppressesDuplicatePngsAndSurfacesCsvsAsDataframes(@TempDir Path dir) throws Exception {
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> msgs.stream().anyMatch(m -> m instanceof DaemonMessage.RunStarted), 2000);
+
+        Files.createDirectories(dir.resolve("output"));
+        // PNGs: ones that duplicate a native surface (suppressed) + one that doesn't (kept).
+        for (String png : new String[] {"roc_curve.png", "confusion_matrix.png",
+                "feature_importance.png", "leaderboard.png", "calibration.png"}) {
+            Files.write(dir.resolve(png), new byte[]{(byte)0x89, 'P', 'N', 'G'}); // tiny PNG-ish
+        }
+        // CSVs: surfaced ones + the two excluded (already have interactive surfaces).
+        Files.writeString(dir.resolve("output/feature_importance.csv"), "feature,importance\nSex,0.21\n");
+        Files.writeString(dir.resolve("output/leaderboard.csv"), "model,auc\nrf,0.88\n");      // excluded (interactive Leaderboard)
+        Files.writeString(dir.resolve("output/oof_final.csv"), "PassengerId,y,oof_prob\n1,0,0.1\n"); // excluded (Predictions Studio)
+
+        // Let a few poll ticks run.
+        Thread.sleep(2500);
+
+        var imageNames = msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.kind().equals("image"))
+                .map(a -> a.path() == null ? "" : a.path())
+                .toList();
+        // Duplicate-of-native PNGs must NOT surface; calibration (no native equiv) must.
+        assertTrue(imageNames.stream().anyMatch(p -> p.endsWith("calibration.png")), "calibration.png kept");
+        assertTrue(imageNames.stream().noneMatch(p -> p.endsWith("roc_curve.png")), "roc_curve.png suppressed");
+        assertTrue(imageNames.stream().noneMatch(p -> p.endsWith("confusion_matrix.png")), "confusion_matrix.png suppressed");
+        assertTrue(imageNames.stream().noneMatch(p -> p.endsWith("feature_importance.png")), "feature_importance.png suppressed");
+        assertTrue(imageNames.stream().noneMatch(p -> p.endsWith("leaderboard.png")), "leaderboard.png suppressed");
+
+        var dfRefs = msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.kind().equals("dataframe"))
+                .map(DaemonMessage.Artifact::ref)
+                .toList();
+        // feature_importance.csv surfaces as a dataframe; leaderboard/oof_final do NOT (excluded).
+        assertTrue(dfRefs.contains("df:feature_importance"), "feature_importance.csv surfaced as a dataframe grid");
+        assertTrue(dfRefs.stream().noneMatch(r -> r.equals("df:leaderboard")), "leaderboard.csv NOT double-surfaced as a grid");
+        assertTrue(dfRefs.stream().noneMatch(r -> r.equals("df:oof_final")), "oof_final.csv NOT double-surfaced as a grid");
+
+        watcher.stop();
+    }
+
     /** The latest status emitted for a given stage id, or null if none. */
     private static DaemonMessage.StageStatus latestStatus(java.util.List<DaemonMessage> msgs, String stageId) {
         return msgs.stream()

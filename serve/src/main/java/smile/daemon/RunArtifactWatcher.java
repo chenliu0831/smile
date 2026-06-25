@@ -130,6 +130,29 @@ public final class RunArtifactWatcher {
         new JsonSidecar("output/best_params.json", "params", "metrics", "Tuned Hyperparameters")
     );
 
+    /** A run CSV surfaced as a `dataframe` artifact (data grid + path) — materialized into the
+     * shared DuckDB session and fetched over /data/{ref}. */
+    private record CsvFrame(String relPath, String ref, String table, String title) {}
+
+    /**
+     * Run CSVs surfaced as data-grid + path artifacts. DELIBERATELY EXCLUDED: any CSV whose
+     * data already has a dedicated INTERACTIVE surface, because a second raw grid would just
+     * duplicate it —
+     *   - `leaderboard.csv` → the interactive Leaderboard (the `candidates` artifact, which IS
+     *     a sortable table), so no raw-grid copy.
+     *   - `oof_final.csv` → the Predictions Studio dataframe (the `submission` artifact), which
+     *     already carries this file's rows.
+     * Everything else (intermediate/result CSVs with no bespoke view) IS surfaced so the user
+     * can always see the data as a table next to its path.
+     */
+    private static final List<CsvFrame> DATAFRAME_CSVS = List.of(
+        new CsvFrame("output/train_features.csv", "df:train_features", "train_features", "Training Features"),
+        new CsvFrame("output/feature_importance.csv", "df:feature_importance", "feature_importance", "Feature Importance"),
+        new CsvFrame("output/leaderboard_final.csv", "df:leaderboard_final", "leaderboard_final", "Final Leaderboard"),
+        new CsvFrame("output/oof_preds.csv", "df:oof_preds", "oof_preds", "OOF Per-Model Predictions"),
+        new CsvFrame("final/submission.csv", "df:submission", "submission_csv", "Submission")
+    );
+
     private static final ObjectMapper JSON = new ObjectMapper();
 
     private final String sessionId;
@@ -235,7 +258,27 @@ public final class RunArtifactWatcher {
         }
         scanFreeformArtifacts();
         scanJsonSidecars();
+        scanDataframes();
         rescanReportMtime();
+    }
+
+    /**
+     * Surface every run CSV as a `dataframe` artifact (data grid + path). Each is materialized
+     * into the shared DuckDB session and referenced by an ArrowRef the frontend fetches over
+     * /data/{ref}; if the SQL bridge is unavailable we still emit a path-only dataframe so the
+     * canvas shows the file + its location. mtime-keyed dedupe so a regenerated CSV re-emits;
+     * stable artifact ref so the canvas replaces in place.
+     */
+    private void scanDataframes() {
+        for (CsvFrame c : DATAFRAME_CSVS) {
+            Path f = workingDir.resolve(c.relPath());
+            if (!Files.isRegularFile(f)) continue;
+            String key = "df:" + c.ref() + ":" + mtimeOf(f);
+            if (!announcedArtifacts.add(key)) continue;
+            ArrowRef data = materializeCsv(c.table(), f);
+            emit.accept(new ArtifactMsg(sessionId,
+                new Artifact(c.ref(), "dataframe", c.title(), null, null, data, f.toString(), null)));
+        }
     }
 
     /** Emit a stage's done transition + its artifact (if it carries one), deduped. */
@@ -364,20 +407,31 @@ public final class RunArtifactWatcher {
 
     /** Whether a cwd PNG is one of the summarize/EDA skill's chart outputs (vs an unrelated
      * image). Matches the skill's fixed names and its per-column cat_ / hist_ prefixes. */
+    /**
+     * PNG chart names that DUPLICATE a native interactive cockpit surface, so we must NOT
+     * surface them as flat images (the native view wins): ROC + confusion → Predictions
+     * Studio; feature importance → Driver Diagnostics; leaderboard → the interactive board.
+     */
+    private static boolean duplicatesNativeSurface(String n) {
+        return n.contains("roc") || n.contains("confusion")
+            || n.contains("importance") || n.contains("leaderboard")
+            || n.contains("precision_recall") || n.contains("pr_curve"); // PR is shown by Predictions Studio
+    }
+
     private static boolean isSummaryChart(String fileName) {
         String n = fileName.toLowerCase();
         if (!n.endsWith(".png")) return false;
+        // Native-first (the user's directive): suppress PNGs that merely duplicate a live
+        // native surface; keep the rest as an image fallback.
+        if (duplicatesNativeSurface(n)) return false;
         return n.startsWith("correlation") || n.startsWith("distribution")
             || n.startsWith("categorical") || n.startsWith("time_series")
             || n.startsWith("numeric") || n.startsWith("cat_") || n.startsWith("hist_")
             || n.startsWith("box_") || n.startsWith("chart") || n.contains("heatmap")
-            // automl postprocess/eval charts (matplotlib PNGs the agent saves to the cwd root).
-            // Native cockpit surfaces supersede the ones with structured data (ROC, confusion,
-            // feature importance, leaderboard); the rest (e.g. calibration) surface as images.
-            || n.contains("roc") || n.contains("confusion") || n.contains("calibration")
-            || n.contains("importance") || n.contains("leaderboard") || n.contains("reliability")
-            || n.contains("residual") || n.contains("shap") || n.contains("pr_curve")
-            || n.contains("precision_recall") || n.contains("learning_curve");
+            // automl postprocess/eval charts WITHOUT a native equivalent (calibration,
+            // reliability, residuals, learning curve, SHAP summary) surface as images.
+            || n.contains("calibration") || n.contains("reliability")
+            || n.contains("residual") || n.contains("shap") || n.contains("learning_curve");
     }
 
     /** A human title from a chart filename, e.g. "correlation_heatmap.png" -> "Correlation Heatmap". */
@@ -432,14 +486,24 @@ public final class RunArtifactWatcher {
      * SQL bridge is unavailable or the CREATE fails — the canvas still surfaces the file.
      */
     private Artifact buildPredictionsDataframe(Path file) {
+        ArrowRef data = materializeCsv(SUBMISSION_TABLE, file);
+        if (data == null) return null;
+        return new Artifact("submission", "dataframe", "Predictions",
+            null, null, data, file.toString(), null);
+    }
+
+    /**
+     * Materialize a CSV as a DuckDB TABLE in the shared session and return an ArrowRef the
+     * frontend resolves via {@code /data/{ref}}. A TABLE (not a VIEW) so it's listed by
+     * {@code duckdb_tables()} and read once (ADR-0011). Returns null if the shared SQL bridge
+     * is unavailable or the CREATE fails — callers fall back to a path-only artifact.
+     */
+    private ArrowRef materializeCsv(String tableName, Path file) {
         try {
-            // read_csv_auto over the absolute path; single-quotes in the path are escaped.
             String path = file.toAbsolutePath().toString().replace("'", "''");
-            SharedSql.execute("CREATE OR REPLACE TABLE \"" + SUBMISSION_TABLE
+            SharedSql.execute("CREATE OR REPLACE TABLE \"" + tableName
                 + "\" AS SELECT * FROM read_csv_auto('" + path + "')");
-            var data = new ArrowRef("arrow", SUBMISSION_TABLE, null, null);
-            return new Artifact("submission", "dataframe", "Predictions",
-                null, null, data, file.toString(), null);
+            return new ArrowRef("arrow", tableName, null, null);
         } catch (Throwable t) {
             return null;
         }

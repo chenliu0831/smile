@@ -15,6 +15,27 @@ export interface DataGridColumns {
 
 export type DataGridData = arrow.Table | DataGridColumns;
 
+/** A column-oriented table as the daemon's /data/{ref} endpoint returns it: name → values. */
+export type ColumnTable = Record<string, (number | string | null)[]>;
+
+/**
+ * Convert the daemon's column-JSON (`{col: [v0, v1, …]}`) into the row-oriented
+ * {@link DataGridColumns} the Data Grid ingests. Pure + WASM-free → unit-tested. Column
+ * order follows the object's key order; row count is the longest column (short columns are
+ * padded with null so ragged input can't throw).
+ */
+export function columnTableToGrid(table: ColumnTable): DataGridColumns {
+  const columns = Object.keys(table);
+  const nRows = columns.reduce((n, c) => Math.max(n, table[c]?.length ?? 0), 0);
+  const rows: Record<string, unknown>[] = [];
+  for (let i = 0; i < nRows; i++) {
+    const row: Record<string, unknown> = {};
+    for (const c of columns) row[c] = table[c]?.[i] ?? null;
+    rows.push(row);
+  }
+  return { columns, rows };
+}
+
 /** Build an Arrow Table from plain columns + rows, inferring column types. */
 export function columnsToArrow({ columns, rows }: DataGridColumns): arrow.Table {
   const arrays: Record<string, (string | number | null)[]> = {};
