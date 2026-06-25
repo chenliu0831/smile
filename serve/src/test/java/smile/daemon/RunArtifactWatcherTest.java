@@ -99,6 +99,38 @@ public class RunArtifactWatcherTest {
         watcher.stop();
     }
 
+    @Test
+    public void summaryMdIsTheReportNotEdaAndNotDoubleSurfaced(@TempDir Path dir) throws Exception {
+        // The automl `summary.md` (cwd root) is the FINAL run summary, not an EDA report.
+        // It must surface as the report stage (when no automl_report.md), never as EDA, and
+        // never ALSO as a freeform "Data Summary" duplicate during an automl run.
+        Files.createDirectories(dir.resolve("output"));
+        Files.writeString(dir.resolve("output/train_features.csv"), "a\n1\n");              // an automl stage → run underway
+        Files.writeString(dir.resolve("summary.md"), "# Titanic AutoML — Summary\n\nFinal model: ensemble, OOF AUC 0.8876.\n");
+
+        var msgs = new CopyOnWriteArrayList<DaemonMessage>();
+        var watcher = new RunArtifactWatcher("s1", dir, msgs::add);
+        watcher.start();
+        waitFor(() -> latestStatus(msgs, "report") == DaemonMessage.StageStatus.done, 5000);
+
+        var reportArtifacts = msgs.stream()
+                .filter(m -> m instanceof DaemonMessage.ArtifactMsg)
+                .map(m -> ((DaemonMessage.ArtifactMsg) m).artifact())
+                .filter(a -> a.body() != null && a.body().contains("Titanic AutoML — Summary"))
+                .toList();
+        // Exactly ONE artifact carries summary.md's content, and it's the report (not EDA, not freeform).
+        assertEquals(1, reportArtifacts.size(), "summary.md must surface exactly once (no freeform duplicate)");
+        assertEquals("report", reportArtifacts.get(0).ref());
+        assertEquals("AutoML Report", reportArtifacts.get(0).title());
+        // The EDA artifact (if any) must NOT carry the final-summary content.
+        assertFalse(msgs.stream().anyMatch(m -> m instanceof DaemonMessage.ArtifactMsg a
+                && a.artifact().ref().equals("eda")
+                && a.artifact().body() != null && a.artifact().body().contains("Final model")),
+                "summary.md must never be shown as the EDA report");
+
+        watcher.stop();
+    }
+
     /** The latest status emitted for a given stage id, or null if none. */
     private static DaemonMessage.StageStatus latestStatus(java.util.List<DaemonMessage> msgs, String stageId) {
         return msgs.stream()

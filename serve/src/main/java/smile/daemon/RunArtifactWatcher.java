@@ -62,7 +62,10 @@ public final class RunArtifactWatcher {
     /** The automl skill's stages in order, each completed by the first of its files to appear. */
     private static final List<StageSpec> STAGES = List.of(
         new StageSpec("eda", "Exploratory Data Analysis",
-            List.of("output/eda_report.md", "output/eda_summary.json", "summary.md", "output/eda.py"), "report", "EDA Report"),
+            // ONLY genuine EDA artifacts. (Not summary.md — that's the FINAL run summary, which
+            // belongs to the report stage below. If none of these exist the agent did EDA
+            // inline and the stage simply backfills to done with no artifact.)
+            List.of("output/eda_report.md", "output/eda_summary.md", "output/eda.md"), "report", "EDA Report"),
         new StageSpec("preprocess", "Preprocessing",
             List.of("output/train_clean.csv", "output/preprocess_features.py"), null, null),
         new StageSpec("features", "Feature Engineering",
@@ -70,13 +73,16 @@ public final class RunArtifactWatcher {
         new StageSpec("candidates", "Candidate Evaluation",
             List.of("output/candidate_scores.md", "output/leaderboard.csv", "output/run_candidates.py"), "leaderboard", "Leaderboard"),
         new StageSpec("refine", "Iterative Refinement",
-            List.of("output/refinement_log.md", "output/leaderboard_final.csv"), "report", "Refinement Log"),
+            // Only a genuine refinement log; leaderboard_final.csv is NOT a refinement log, so
+            // when the agent skips refinement this stage just backfills to done (no artifact).
+            List.of("output/refinement_log.md"), "report", "Refinement Log"),
         new StageSpec("solution", "Final Solution",
             List.of("output/solution_final.py"), "file", "solution_final.py"),
         new StageSpec("evaluate", "Final Evaluation",
             List.of("output/model_evaluation_report.md", "output/postprocess_results.json"), "report", "Evaluation Report"),
         new StageSpec("report", "Report",
-            List.of("output/automl_report.md", "output/summary.md"), "report", "AutoML Report"),
+            // The final run report; `summary.md` (cwd root) is the agent's common variant.
+            List.of("output/automl_report.md", "output/summary.md", "summary.md"), "report", "AutoML Report"),
         // Predictions: prefer an OOF file (carries the ground-truth label column, so Predictions
         // Studio can compute ROC/confusion) over the bare submission (test preds, no truth).
         new StageSpec("submission", "Submission",
@@ -298,9 +304,15 @@ public final class RunArtifactWatcher {
      * canvas can render a rich EDA view without a full AutoML run.
      */
     private void scanFreeformArtifacts() {
+        // The cwd-root markdown summaries belong to a STANDALONE summarize run. Once an automl
+        // run is underway (any STAGE has been announced), summary.md / eda_report.md are owned
+        // by the STAGES table (report / eda) — surfacing them here too would double up the same
+        // file as both "AutoML Report" and "Data Summary". So skip freeform md during an automl run.
+        boolean automlUnderway = !announcedStages.isEmpty();
         // Markdown summary written directly into the cwd (the automl eda_report.md under
         // output/ is handled by STAGES; this covers the summarize skill's own file).
         for (String md : List.of("summary.md", "eda_report.md", "data_summary.md")) {
+            if (automlUnderway) continue;
             Path f = workingDir.resolve(md);
             if (!Files.isRegularFile(f)) continue;
             // mtime-stamped key so a regenerated summary re-emits; stable artifact ref so the
